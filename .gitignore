@@ -1,0 +1,41 @@
+# JS / Next.js / bundlers
+node_modules/
+.next/
+.nuxt/
+dist/
+.turbo/
+*.tsbuildinfo
+.eslintcache
+
+# Bun
+.bun/
+
+# env（示例文件必须保留）
+.env
+.env.*
+!.env.example
+!.env.test.example
+
+# Go（插件后端构建产物）
+plugin/plugins/*/backend/bin/
+plugin/plugins/*/backend/sforum-*
+plugin/plugins/*/backend/*.test
+
+# 包体：仓库永不存 ZIP/TAR
+*.zip
+*.tar.gz
+!**/testdata/**/*.zip
+
+# 运行时与报告
+tmp/
+logs/
+coverage/
+playwright-report/
+test-results/
+.drizzle/
+
+# 编辑器 / 系统
+.DS_Store
+.idea/
+.vscode/
+*.swp
