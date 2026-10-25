@@ -38,39 +38,78 @@ export function stateBlock(
 }
 
 /**
- * The mark: a store-hosted icon when there is one, otherwise the letter tile.
+ * 封面 / 图标：同一个元素，三级回退。
  *
- * The `<img>` is built by hand rather than through `bridge.icons` because this page has no
- * Host icon runtime and the picture is not an icon-font glyph. `onerror` drops the element
- * and restores the initial, so a store that is down, an asset that was pruned, or a blocked
- * `img-src` degrades to the same tile the page used before icons existed.
+ * 1. `socialImageUrl` —— 商城托管的品牌分享卡（1280×640），CSS 按 2:1 裁切；
+ * 2. `iconUrl` —— 商城托管的方形图标；
+ * 3. 字母块（`initial`）—— 在有图片之前页面用的那一级。
+ *
+ * `<img>` 手写而不是走 `bridge.icons`：这个页面没有 Host 图标运行时，分享卡也不是图标字体
+ * 的字形。每一级 `onerror` 只退到下一级，所以商城不可达、资产被清理、宿主 `img-src` 被拦，
+ * 最终都落成一块字母砖，而不是一张破图。
  */
-function markEl(input: { iconUrl: string | null; initial: string; large?: boolean }): HTMLElement {
-  const tile = el(
-    "span",
-    input.large ? "sfstore__tile sfstore__tile--lg" : "sfstore__tile",
-    input.iconUrl ? undefined : input.initial,
-  );
-  tile.setAttribute("aria-hidden", "true");
-  if (!input.iconUrl) return tile;
+type MarkInput = {
+  socialImageUrl: string | null;
+  iconUrl: string | null;
+  initial: string;
+  large?: boolean;
+};
 
-  const img = el("img", "sfstore__tile-img") as HTMLImageElement;
-  img.src = input.iconUrl;
+function tileClass(large?: boolean): string {
+  return large ? "sfstore__tile sfstore__tile--lg" : "sfstore__tile";
+}
+
+function markImage(
+  className: string,
+  width: number,
+  height: number,
+): HTMLImageElement {
+  const img = el("img", className) as HTMLImageElement;
   img.alt = "";
-  img.width = input.large ? 40 : 32;
-  img.height = input.large ? 40 : 32;
+  img.width = width;
+  img.height = height;
   img.loading = "lazy";
   img.decoding = "async";
   img.referrerPolicy = "no-referrer";
-  img.addEventListener(
-    "error",
-    () => {
-      img.remove();
-      tile.textContent = input.initial;
-    },
-    { once: true },
-  );
-  tile.append(img);
+  return img;
+}
+
+function markEl(input: MarkInput): HTMLElement {
+  const tile = el("span", tileClass(input.large));
+  tile.setAttribute("aria-hidden", "true");
+
+  // 最后一级：字母块。任何破图都落到这里，而不是留在页面上。
+  const showInitial = () => {
+    tile.className = tileClass(input.large);
+    tile.replaceChildren();
+    tile.textContent = input.initial;
+  };
+
+  const showIcon = () => {
+    if (!input.iconUrl) {
+      showInitial();
+      return;
+    }
+    const side = input.large ? 40 : 32;
+    const img = markImage("sfstore__tile-img", side, side);
+    img.addEventListener("error", showInitial, { once: true });
+    img.src = input.iconUrl;
+    tile.className = tileClass(input.large);
+    tile.replaceChildren(img);
+  };
+
+  if (!input.socialImageUrl) {
+    showIcon();
+    return tile;
+  }
+
+  const width = input.large ? 128 : 96;
+  const img = markImage("sfstore__cover-img", width, width / 2);
+  // 先挂回退，再赋 src：某些实现赋值即开始加载。
+  img.addEventListener("error", showIcon, { once: true });
+  img.src = input.socialImageUrl;
+  tile.className = `${tileClass(input.large)} sfstore__tile--cover`;
+  tile.replaceChildren(img);
   return tile;
 }
 
@@ -82,7 +121,11 @@ export function catalogRowView(item: CatalogItemView, active: boolean): HTMLElem
   row.setAttribute("aria-pressed", active ? "true" : "false");
   if (active) row.classList.add("sfstore__row--active");
 
-  const tile = markEl({ iconUrl: item.iconUrl, initial: item.initial });
+  const tile = markEl({
+    socialImageUrl: item.socialImageUrl,
+    iconUrl: item.iconUrl,
+    initial: item.initial,
+  });
 
   const main = el("span", "sfstore__row-main");
   main.append(el("span", "sfstore__row-title", item.name));
@@ -94,6 +137,11 @@ export function catalogRowView(item: CatalogItemView, active: boolean): HTMLElem
   const meta = el("span", "sfstore__row-meta");
   meta.append(badge(item.kindLabel));
   if (item.latestVersion) meta.append(badge(`v${item.latestVersion}`));
+  // 宿主清单里的已装版本与可更新提示：卡片只给结论，宿主状态留到详情说。
+  if (item.installed) {
+    meta.append(badge(item.installed.versionLabel, "ok"));
+    if (item.installed.updateLabel) meta.append(badge(item.installed.updateLabel, "accent"));
+  }
   for (const platform of item.platformLabels.slice(0, 2)) meta.append(badge(platform, "muted"));
   // What the package asks of a host — the same string core evaluates at install time.
   if (item.constraint) {
@@ -110,7 +158,12 @@ export function catalogRowView(item: CatalogItemView, active: boolean): HTMLElem
 
 export function detailHeader(view: ProductView, copy: Copy): HTMLElement {
   const wrap = el("div", "sfstore__detail-head");
-  const tile = markEl({ iconUrl: view.iconUrl, initial: initialOf(view.name), large: true });
+  const tile = markEl({
+    socialImageUrl: view.socialImageUrl,
+    iconUrl: view.iconUrl,
+    initial: initialOf(view.name),
+    large: true,
+  });
 
   const main = el("div", "sfstore__detail-main");
   main.append(el("h3", "sfstore__detail-name", view.name));
@@ -118,10 +171,18 @@ export function detailHeader(view: ProductView, copy: Copy): HTMLElement {
   tags.append(mono(view.extensionId), badge(view.kindLabel));
   if (view.latestVersion) tags.append(badge(`v${view.latestVersion}`));
   if (view.categoryLabel) tags.append(badge(view.categoryLabel, "muted"));
+  if (view.installed) {
+    tags.append(badge(view.installed.versionLabel, "ok"));
+    if (view.installed.updateLabel) tags.append(badge(view.installed.updateLabel, "accent"));
+  }
   main.append(tags);
   if (view.summary) main.append(el("p", "sfstore__summary", view.summary));
   if (view.platforms.length) {
     main.append(el("p", "sfstore__hint", copy.t("platformsInline", { list: view.platforms.join(" · ") })));
+  }
+  // 宿主状态只在详情作次要说明（例如已停用）；卡片不展开它。
+  if (view.installed?.statusNote) {
+    main.append(el("p", "sfstore__hint", view.installed.statusNote));
   }
 
   wrap.append(tile, main);

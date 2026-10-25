@@ -17,6 +17,15 @@ export type CompatibilityDto = {
   constraint?: string;
 };
 
+/**
+ * 宿主已装清单里的同名扩展（SForum `extensions` 行）。`status` 是宿主自己的生命周期词
+ * （`installed` / `enabled` / `disabled`），原样透出：页面只解释它，不改写它。
+ */
+export type InstalledExtension = {
+  version: string;
+  status: string;
+};
+
 export type CatalogItemDto = {
   slug: string;
   extensionId: string;
@@ -25,6 +34,15 @@ export type CatalogItemDto = {
   summary: string;
   category?: string | null;
   iconUrl?: string | null;
+  /**
+   * 商城内容寻址的品牌分享卡（1280×640，后端已拼成绝对地址）。目录卡片把它当封面；
+   * 缺失或加载失败才退回 iconUrl，再退回字母块。
+   */
+  socialImageUrl: string | null;
+  /** 宿主已装清单里的同名扩展；null = 这台宿主没装。 */
+  installed: InstalledExtension | null;
+  /** 已装版本低于该产品的 latestVersion（后端判定）；页面只负责展示。 */
+  updateAvailable: boolean;
   latestVersion: string;
   /** 清单里的宿主约束，原样透出；上游没给就是空串。 */
   sforumVersion: string;
@@ -86,6 +104,12 @@ export type ProductDto = {
   summary: string;
   category?: string | null;
   iconUrl?: string | null;
+  /** 与目录项同一份分享卡；详情头部按同一优先级展示。 */
+  socialImageUrl: string | null;
+  /** 宿主已装清单条目；null = 未装。 */
+  installed: InstalledExtension | null;
+  /** 已装版本低于 latestVersion。 */
+  updateAvailable: boolean;
   repoUrl?: string | null;
   latestVersion?: string;
   readme: ReadmeDto | null;
@@ -158,6 +182,25 @@ export type ConstraintChipView = {
   title: string;
 };
 
+/**
+ * 「已装 / 可更新」标记。文案在这里按 `Copy` 生成，卡片与详情共用，避免两处措辞漂移。
+ *
+ * 它说的是**宿主清单里有什么**，不是本页把安装流程做成了什么：安装成功一律只写「已暂存」，
+ * 这个徽标不得改写安装区的结论。
+ */
+export type InstalledView = {
+  /** 宿主清单里的版本号（不含 `v` 前缀）。 */
+  version: string;
+  /** 「已安装 v1.2.3」 */
+  versionLabel: string;
+  /** 「可更新至 v1.4.2」；没有可更新版本时为 null。 */
+  updateLabel: string | null;
+  /** 宿主状态原文。 */
+  status: string;
+  /** 只在详情里出现的次要说明（已停用 / 尚未启用 / 其它状态）；无需说明时为 null。 */
+  statusNote: string | null;
+};
+
 export type CatalogItemView = {
   slug: string;
   extensionId: string;
@@ -177,6 +220,11 @@ export type CatalogItemView = {
    */
   compatibility: CompatibilityView | null;
   /**
+   * 商城托管的品牌分享卡绝对地址（1280×640），封面用；加载失败退到 `iconUrl`，再退到字母块，
+   * 所以面板上不会出现破图。
+   */
+  socialImageUrl: string | null;
+  /**
    * Absolute URL of the store-hosted mark, or null. The store turns its own
    * `/api/assets/<sha>` into an absolute address because a relative one would resolve
    * against the forum; the picture itself is public and content-addressed, so the browser
@@ -184,8 +232,10 @@ export type CatalogItemView = {
    * never show a broken image.
    */
   iconUrl: string | null;
-  /** Letter tile: the first character of the name, shown when there is no icon. */
+  /** Letter tile: the first character of the name, shown when there is no picture at all. */
   initial: string;
+  /** 已装 / 可更新标记；未装时为 null。 */
+  installed: InstalledView | null;
 };
 
 export type PlatformOption = {
@@ -221,8 +271,12 @@ export type ProductView = {
   /** Already-rendered README, or null when the store has none yet. */
   readme: ReadmeDto | null;
   categoryLabel: string;
+  /** 与目录项同一份分享卡；详情头部按同一优先级展示。 */
+  socialImageUrl: string | null;
   /** Absolute store-hosted mark, or null (letter tile). See `CatalogItemView.iconUrl`. */
   iconUrl: string | null;
+  /** 已装 / 可更新标记；未装时为 null。 */
+  installed: InstalledView | null;
   latestVersion: string;
   releases: ReleaseView[];
   platforms: string[];

@@ -4,9 +4,11 @@
 // 以 `en` 开头 → en-US，其余（含缺失、空串、未知值）→ zh-CN。这里不引 i18n 库、
 // 不调 `bridge.t`（宿主没有本插件的文案包），也不因为 locale 缺失抛错。
 //
-// 硬文案规则（任务书 §7.5 第 13–15 条）在两种语言里都成立：成功只写「已暂存 / Staged」
-// 并指向 core 的信任与启用；不出现「已安装 / installed」「已更新 / updated」
-// 「已验证构建 / verified build」「自动升级」。
+// 硬文案规则（任务书 §7.5 第 13–15 条）管的是**安装流程的成功语义**：成功只写「已暂存 /
+// Staged」并指向 core 的信任与启用；不出现「已更新 / updated」「已验证构建 / verified
+// build」「自动升级 / auto-upgrade」。
+// 唯一例外是来源为宿主已装清单的事实徽标（`installedBadge` / `updateBadge`）：它们说的是
+// 这台宿主装了什么，不是本页把包装上了；它们不得改写安装区的成功文案，也不出现「已更新」。
 
 export type Locale = "zh-CN" | "en-US";
 
@@ -22,6 +24,7 @@ const ZH = {
   categoryField: "分类",
   categoryAria: "分类",
   refreshAction: "刷新",
+  compatOnlyAction: "只看当前版本可安装",
 
   resultCount: "共 {count} 个结果",
   resultCountOne: "共 1 个结果",
@@ -72,6 +75,12 @@ const ZH = {
     "当前宿主没有暴露版本号，本页只展示 sforumVersion 约束；兼容性由 core 在安装时判定。",
   compatEstimatedNote: "宿主是开发版构建，兼容性按开发版估算。",
   compatFilteredNote: "已按宿主版本筛出一份可安装的目录。",
+  compatAllNote: "正在显示全部扩展（不兼容的也在列表里）；兼容性由 core 在安装时判定。",
+  installedBadge: "已安装 v{version}",
+  updateBadge: "可更新至 v{version}",
+  installedStatusDisabled: "已在宿主停用",
+  installedStatusUnenabled: "已装，尚未启用",
+  installedStatusOther: "宿主状态：{status}",
   platformAny: "任意平台",
   statusPublished: "已发布",
   statusYanked: "已撤回",
@@ -149,6 +158,7 @@ const EN: Record<CopyKey, string> = {
   categoryField: "Category",
   categoryAria: "Category",
   refreshAction: "Refresh",
+  compatOnlyAction: "Only show what this version can install",
 
   resultCount: "{count} results",
   resultCountOne: "1 result",
@@ -200,6 +210,13 @@ const EN: Record<CopyKey, string> = {
   compatEstimatedNote:
     "The host is a dev build, so compatibility is estimated from the development version.",
   compatFilteredNote: "Only extensions this host version can install are listed.",
+  compatAllNote:
+    "All extensions are listed, including ones this host version cannot install; core decides compatibility at install time.",
+  installedBadge: "Installed v{version}",
+  updateBadge: "Update to v{version}",
+  installedStatusDisabled: "Disabled in this host",
+  installedStatusUnenabled: "Installed but not enabled yet",
+  installedStatusOther: "Host status: {status}",
   platformAny: "Any platform",
   statusPublished: "Published",
   statusYanked: "Yanked",

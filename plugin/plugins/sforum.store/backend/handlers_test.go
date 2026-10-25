@@ -81,6 +81,8 @@ func TestCatalogForwardsFiltersRuntimeTargetAndReshapesResponse(t *testing.T) {
 	want := map[string]string{
 		"channel": "beta", "q": "demo", "category": "tools", "cursor": "c1", "limit": "25",
 		"os": runtime.GOOS, "arch": runtime.GOARCH,
+		// compat 缺省即 compatible；宿主版本未知时它是唯一会出去的过滤参数。
+		"compat": compatModeCompatible,
 	}
 	if got := len(call.Query); got != len(want) {
 		t.Fatalf("upstream query keys = %v, want exactly %d keys", call.Query, len(want))
@@ -123,7 +125,8 @@ func TestCatalogForwardsFiltersRuntimeTargetAndReshapesResponse(t *testing.T) {
 	}
 	wantItemKeys := []string{
 		"slug", "extensionId", "name", "kind", "summary", "category", "iconUrl",
-		"latestVersion", "sforumVersion", "updatedAt", "platforms", "compatibility",
+		"socialImageUrl", "latestVersion", "installed", "updateAvailable",
+		"sforumVersion", "updatedAt", "platforms", "compatibility",
 	}
 	if len(item) != len(wantItemKeys) {
 		t.Errorf("item keys = %v, want %v", item, wantItemKeys)
@@ -141,6 +144,16 @@ func TestCatalogForwardsFiltersRuntimeTargetAndReshapesResponse(t *testing.T) {
 	}
 	if got := item["iconUrl"]; got != nil {
 		t.Errorf("item iconUrl = %v, want nil", got)
+	}
+	// 上游没给分享卡时是显式 null；没有已装清单就是 null + false，不做推断。
+	if got := item["socialImageUrl"]; got != nil {
+		t.Errorf("item socialImageUrl = %v, want nil", got)
+	}
+	if got := item["installed"]; got != nil {
+		t.Errorf("item installed = %v, want nil", got)
+	}
+	if got := item["updateAvailable"]; got != false {
+		t.Errorf("item updateAvailable = %v, want false", got)
 	}
 	// 清单约束原样透出：这是产品事实，不是插件给出的兼容判词。
 	if got := item["sforumVersion"]; got != ">=1.0.0" {

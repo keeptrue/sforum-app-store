@@ -6,6 +6,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/Masterminds/semver/v3"
 )
 
 // 上游（商城 service/）的读模型。字段与 contracts/store-api.yaml 对齐，
@@ -54,20 +56,21 @@ type upstreamRelease struct {
 // upstreamSummary 是目录项与详情共有的字段集合；详情在它之上追加
 // readme / repoUrl / releases。产品介绍只有 readme 一个来源，没有手写正文与截图。
 type upstreamSummary struct {
-	Slug          string                 `json:"slug"`
-	ExtensionID   string                 `json:"extensionId"`
-	Name          string                 `json:"name"`
-	Kind          string                 `json:"kind"`
-	Summary       string                 `json:"summary"`
-	Category      *string                `json:"category"`
-	Tags          []string               `json:"tags"`
-	Owner         *string                `json:"owner"`
-	IconURL       *string                `json:"iconUrl"`
-	LatestVersion string                 `json:"latestVersion"`
-	SForumVersion string                 `json:"sforumVersion"`
-	UpdatedAt     string                 `json:"updatedAt"`
-	Platforms     []upstreamPlatform     `json:"platforms"`
-	Compatibility *upstreamCompatibility `json:"compatibility"`
+	Slug           string                 `json:"slug"`
+	ExtensionID    string                 `json:"extensionId"`
+	Name           string                 `json:"name"`
+	Kind           string                 `json:"kind"`
+	Summary        string                 `json:"summary"`
+	Category       *string                `json:"category"`
+	Tags           []string               `json:"tags"`
+	Owner          *string                `json:"owner"`
+	IconURL        *string                `json:"iconUrl"`
+	SocialImageURL *string                `json:"socialImageUrl"`
+	LatestVersion  string                 `json:"latestVersion"`
+	SForumVersion  string                 `json:"sforumVersion"`
+	UpdatedAt      string                 `json:"updatedAt"`
+	Platforms      []upstreamPlatform     `json:"platforms"`
+	Compatibility  *upstreamCompatibility `json:"compatibility"`
 }
 
 type upstreamCatalog struct {
@@ -151,13 +154,14 @@ func validKind(value string) bool {
 }
 
 // catalogResponseValues 从上游页生成 catalog.response DTO。baseURL 是商城基址，
-// 用来把 iconUrl 拼成绝对地址。
+// 用来把 iconUrl / socialImageUrl 拼成绝对地址；inventory 是宿主已装清单快照，
+// 用来标注 installed 与 updateAvailable。
 // 返回 dropped：形状不合法的条目数量，handler 只把它写进日志。
-func catalogResponseValues(result catalogResult, baseURL string) (map[string]any, int) {
+func catalogResponseValues(result catalogResult, baseURL string, inventory installedInventory) (map[string]any, int) {
 	items := make([]any, 0, len(result.page.Items))
 	dropped := 0
 	for _, item := range result.page.Items {
-		values, ok := catalogItemValues(item, baseURL)
+		values, ok := catalogItemValues(item, baseURL, inventory)
 		if !ok {
 			dropped++
 			continue
@@ -185,23 +189,28 @@ func catalogResponseValues(result catalogResult, baseURL string) (map[string]any
 
 // catalogItemValues 只映射 catalog.response 定义过的字段：tags / owner 这类
 // 上游字段一律丢弃，页面看到的是稳定形状。
-func catalogItemValues(item upstreamSummary, baseURL string) (map[string]any, bool) {
+func catalogItemValues(item upstreamSummary, baseURL string, inventory installedInventory) (map[string]any, bool) {
 	if !validKind(item.Kind) || strings.TrimSpace(item.Slug) == "" {
 		return nil, false
 	}
+	installed, found := inventory.lookup(item.ExtensionID)
 	values := map[string]any{
-		"slug":          item.Slug,
-		"extensionId":   item.ExtensionID,
-		"name":          item.Name,
-		"kind":          item.Kind,
-		"summary":       item.Summary,
-		"category":      nullableText(item.Category),
-		"iconUrl":       absoluteAssetURL(baseURL, item.IconURL),
-		"latestVersion": item.LatestVersion,
+		"slug":           item.Slug,
+		"extensionId":    item.ExtensionID,
+		"name":           item.Name,
+		"kind":           item.Kind,
+		"summary":        item.Summary,
+		"category":       nullableText(item.Category),
+		"iconUrl":        absoluteAssetURL(baseURL, item.IconURL),
+		"socialImageUrl": absoluteAssetURL(baseURL, item.SocialImageURL),
+		"latestVersion":  item.LatestVersion,
 		// 清单里的宿主约束，原样透出：目录行展示它，判定仍由 core 在安装时做。
 		"sforumVersion": item.SForumVersion,
 		"platforms":     platformValues(item.Platforms),
 		"compatibility": compatibilityValues(item.Compatibility),
+		// 已装信息只来自宿主清单：读不到就是 null / false，不推断。
+		"installed":       installedValues(installed, found),
+		"updateAvailable": updateAvailable(installed.Version, item.LatestVersion),
 	}
 	if updatedAt := strings.TrimSpace(item.UpdatedAt); updatedAt != "" {
 		values["updatedAt"] = updatedAt
@@ -209,7 +218,8 @@ func catalogItemValues(item upstreamSummary, baseURL string) (map[string]any, bo
 	return values, true
 }
 
-// absoluteAssetURL 把商城给的相对资产地址拼成绝对地址。
+// absoluteAssetURL 把商城给的相对资产地址拼成绝对地址。图标与分享卡共用这条规则：
+// 两者都是内容寻址的公开资源，商城给的都是 /api/assets/<sha> 这样的相对路径。
 //
 // 面板里的 <img> 需要绝对地址：/api/assets/<sha> 是商城自己的路径，相对地址会落到论坛
 // 域名上。这里刻意不做图片代理 —— 商城不进论坛请求链路，图片是公开的内容寻址资源，由
@@ -239,7 +249,8 @@ func absoluteAssetURL(baseURL string, path *string) any {
 
 // productResponseValues 生成 product.response DTO。kind 不合法时返回错误：
 // 详情页没有条目可丢，契约被破坏就是上游故障（502），不能伪造一个 kind。
-func productResponseValues(result productResult, baseURL string) (map[string]any, int, error) {
+// inventory 提供 installed / updateAvailable，与目录项同源。
+func productResponseValues(result productResult, baseURL string, inventory installedInventory) (map[string]any, int, error) {
 	if !validKind(result.product.Kind) || strings.TrimSpace(result.product.Slug) == "" {
 		return nil, 0, &upstreamError{category: errUpstreamFailure, kind: "invalid_product"}
 	}
@@ -255,18 +266,22 @@ func productResponseValues(result productResult, baseURL string) (map[string]any
 		releases = append(releases, values)
 	}
 
+	installed, found := inventory.lookup(result.product.ExtensionID)
 	product := map[string]any{
-		"slug":        result.product.Slug,
-		"extensionId": result.product.ExtensionID,
-		"name":        result.product.Name,
-		"kind":        result.product.Kind,
-		"summary":     result.product.Summary,
-		"readme":      readmeValues(result.product.Readme),
-		"category":    nullableText(result.product.Category),
-		"iconUrl":     absoluteAssetURL(baseURL, result.product.IconURL),
-		"repoUrl":     nullableText(result.product.RepoURL),
-		"platforms":   platformValues(result.product.Platforms),
-		"releases":    releases,
+		"slug":            result.product.Slug,
+		"extensionId":     result.product.ExtensionID,
+		"name":            result.product.Name,
+		"kind":            result.product.Kind,
+		"summary":         result.product.Summary,
+		"readme":          readmeValues(result.product.Readme),
+		"category":        nullableText(result.product.Category),
+		"iconUrl":         absoluteAssetURL(baseURL, result.product.IconURL),
+		"socialImageUrl":  absoluteAssetURL(baseURL, result.product.SocialImageURL),
+		"repoUrl":         nullableText(result.product.RepoURL),
+		"platforms":       platformValues(result.product.Platforms),
+		"releases":        releases,
+		"installed":       installedValues(installed, found),
+		"updateAvailable": updateAvailable(installed.Version, result.product.LatestVersion),
 	}
 	if latest := strings.TrimSpace(result.product.LatestVersion); latest != "" {
 		product["latestVersion"] = latest
@@ -276,6 +291,30 @@ func productResponseValues(result productResult, baseURL string) (map[string]any
 		"stale":     result.stale,
 		"fetchedAt": fetchedAtString(result.fetchedAt),
 	}, dropped, nil
+}
+
+// installedValues 把宿主清单里的同 id 条目映射成 installed。未知（清单没读到、
+// 或者这台宿主确实没装）给 null：页面据此不显示任何「已安装」结论。
+// 返回 any（nil 或对象）：路由正文是 protobuf Struct，指针不是合法 JSON 值。
+func installedValues(item installedExtension, known bool) any {
+	if !known {
+		return nil
+	}
+	return map[string]any{"version": item.Version, "status": item.Status}
+}
+
+// updateAvailable 只在两端都能被 semver 解析时给结论：清单里的版本可能是 dev
+// 标签或历史写法，解析失败就保持 false，不猜「大概能升级」。等值也不算可升级。
+func updateAvailable(installedVersion, latestVersion string) bool {
+	current, err := semver.NewVersion(strings.TrimSpace(installedVersion))
+	if err != nil {
+		return false
+	}
+	latest, err := semver.NewVersion(strings.TrimSpace(latestVersion))
+	if err != nil {
+		return false
+	}
+	return current.LessThan(latest)
 }
 
 func releaseValues(release upstreamRelease) (map[string]any, bool) {

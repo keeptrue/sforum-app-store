@@ -14,6 +14,7 @@ import (
 
 	pluginv2 "github.com/zhuchunshu/sforum/apps/api/sdk/plugin/v2"
 	pluginwire "github.com/zhuchunshu/sforum/apps/api/sdk/plugin/v2/gen/sforum/plugin/v2"
+	protocolwire "github.com/zhuchunshu/sforum/apps/api/sdk/plugin/v2/gen/sforum/protocol/v2"
 )
 
 // fakeUpstream 是 httptest 的 TLS 假上游：https 基址满足客户端只接受 https 的约束，
@@ -104,6 +105,80 @@ func newBoundStoreServer(t *testing.T, fake *fakeUpstream, settings storeSetting
 	server := newTestStoreServer(t, settings)
 	server.store.http = fake.client(t)
 	return server
+}
+
+// emptyRequestContext 是路由上下文的最小样例：Host 调用会克隆它并清空 Actor。
+func emptyRequestContext() *protocolwire.RequestContext {
+	return &protocolwire.RequestContext{RequestId: "test-request"}
+}
+
+// stubHostBuild 冒充「宿主在握手时给了版本」：测试不启动 go-plugin 运行时，
+// 因此没有真正的 HostBuild() 可读。
+func stubHostBuild(server *storeServer, coreVersion, buildVersion string) {
+	server.hostBuildOverride = &hostBuild{CoreVersion: coreVersion, BuildVersion: buildVersion}
+}
+
+// fakeInventory 是 Host 清单查询的内存替换：键是请求的 Offset。用它既不需要
+// go-plugin 运行时，也能断言翻页顺序与缓存命中次数。
+type fakeInventory struct {
+	mu      sync.Mutex
+	pages   map[uint64]fakeInventoryPage
+	offsets []uint64
+}
+
+type fakeInventoryPage struct {
+	items []installedExtension
+	next  uint64
+	err   error
+}
+
+func newFakeInventory() *fakeInventory {
+	return &fakeInventory{pages: make(map[uint64]fakeInventoryPage)}
+}
+
+// page 登记一页：next 是这一页之后应继续的 Offset，0 表示没有更多。
+func (f *fakeInventory) page(offset, next uint64, items ...installedExtension) *fakeInventory {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.pages[offset] = fakeInventoryPage{items: items, next: next}
+	return f
+}
+
+// fail 登记一次读取失败（能力未授予、旧宿主、超时都走这条路径）。
+func (f *fakeInventory) fail(offset uint64, err error) *fakeInventory {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.pages[offset] = fakeInventoryPage{err: err}
+	return f
+}
+
+func (f *fakeInventory) fetch(ctx context.Context, offset uint64) ([]installedExtension, uint64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.offsets = append(f.offsets, offset)
+	page, ok := f.pages[offset]
+	if !ok {
+		return nil, 0, nil
+	}
+	return page.items, page.next, page.err
+}
+
+// requests 返回每次请求的 Offset，用来断言翻页与缓存。
+func (f *fakeInventory) requests() []uint64 {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]uint64(nil), f.offsets...)
+}
+
+// installedRow 造一行清单条目。
+func installedRow(extensionID, version, status string) installedExtension {
+	return installedExtension{
+		ExtensionID: extensionID,
+		Name:        extensionID,
+		Version:     version,
+		Type:        kindPlugin,
+		Status:      status,
+	}
 }
 
 func invokeRoute(

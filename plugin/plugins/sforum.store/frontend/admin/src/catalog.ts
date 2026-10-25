@@ -9,7 +9,7 @@
 // - 手写 ESM 拿不到 Host 图标运行时：所有按钮用文字，不用 emoji、不手绘内联 SVG。
 
 import { createCopy } from "./copy";
-import { buttonEl, el, fieldEl, selectEl } from "./dom";
+import { buttonEl, el, fieldEl, selectEl, toggleEl } from "./dom";
 import {
   CORE_INSTALL_PATH,
   INSTALL_URL_PATH,
@@ -33,7 +33,7 @@ import {
   toCatalogItemView,
   toProductView,
 } from "./logic";
-import type { ChannelChoice, FailureClass } from "./logic";
+import type { ChannelChoice, CompatMode, FailureClass } from "./logic";
 import {
   catalogRowView,
   detailHeader,
@@ -52,6 +52,7 @@ import type {
   InstallUrlResponseDto,
   Kind,
   PageBridge,
+  PlatformDto,
   PlatformOption,
   ProductDto,
   ProductView,
@@ -78,6 +79,8 @@ type State = {
   query: string;
   channel: ChannelChoice;
   category: string;
+  /** 兼容性口径：默认只看能装的；`all` 才向路由追加 `compat=all`。 */
+  compatMode: CompatMode;
   page: number;
   trail: Array<string | null>;
   loading: boolean;
@@ -110,6 +113,7 @@ function initialState(): State {
     query: "",
     channel: "stable",
     category: "",
+    compatMode: "compatible",
     page: 0,
     trail: [null],
     loading: false,
@@ -171,6 +175,14 @@ export function mount(target: HTMLElement, bridge: PageBridge): () => void {
   const refreshButton = buttonEl(copy.t("refreshAction"));
   refreshButton.setAttribute("data-role", "refresh");
 
+  // 兼容性开关：只在页级判决存在时出现。宿主没给版本（`unknown`）时后端本来就不按版本筛，
+  // 开关按下去不会有任何变化，所以藏起来，由页级说明讲清楚（见 renderMeta）。
+  const compatToggle = toggleEl(copy.t("compatOnlyAction"), {
+    checked: state.compatMode === "compatible",
+  });
+  compatToggle.label.setAttribute("data-role", "compat-toggle");
+  compatToggle.label.hidden = true;
+
   const filters = el("div", "sfstore__filters");
   filters.append(
     fieldEl(copy.t("searchField"), searchInput),
@@ -198,7 +210,7 @@ export function mount(target: HTMLElement, bridge: PageBridge): () => void {
   compatNoteEl.setAttribute("data-role", "compat-note");
   compatNoteEl.hidden = true;
   const metaRow = el("div", "sfstore__meta");
-  metaRow.append(countEl, staleEl, compatNoteEl);
+  metaRow.append(countEl, compatToggle.label, staleEl, compatNoteEl);
 
   const listEl = el("div", "sfstore__list");
   listEl.setAttribute("data-role", "list");
@@ -302,16 +314,18 @@ export function mount(target: HTMLElement, bridge: PageBridge): () => void {
           channel: state.channel,
           category: state.category,
           cursor: state.trail[state.page] ?? null,
+          compatMode: state.compatMode,
         }),
       );
       if (disposed || generation !== catalogGeneration) return;
       const document_ = parseCatalog(payload);
       state.items = document_.items.map((item) => toCatalogItemView(item, copy));
       state.total = document_.total;
-      state.nextCursor = document_.nextCursor;
+      // parseCatalog 已经归一化过；这里把可空声明收紧成状态的真实形状。
+      state.nextCursor = document_.nextCursor ?? null;
       state.target = document_.target ?? null;
-      state.stale = document_.stale;
-      state.fetchedAt = document_.fetchedAt;
+      state.stale = document_.stale === true;
+      state.fetchedAt = document_.fetchedAt ?? "";
       state.pageCompatibility = document_.compatibility;
       state.catalogMode = state.items.length ? "ready" : "empty";
       state.errorText = "";
@@ -524,9 +538,15 @@ export function mount(target: HTMLElement, bridge: PageBridge): () => void {
       staleEl.hidden = true;
       staleEl.textContent = "";
     }
-    const note = compatibilityNote(state.pageCompatibility, copy);
+    const note = compatibilityNote(state.pageCompatibility, copy, state.compatMode);
     compatNoteEl.hidden = note === "";
     compatNoteEl.textContent = note;
+
+    // 开关只在有判决时存在；`checked` 始终跟状态走，避免重新渲染后与请求口径脱节。
+    const showToggle =
+      state.pageCompatibility !== null && state.pageCompatibility.status !== "unknown";
+    compatToggle.label.hidden = !showToggle;
+    compatToggle.input.checked = state.compatMode === "compatible";
   }
 
   function renderList() {
@@ -721,6 +741,14 @@ export function mount(target: HTMLElement, bridge: PageBridge): () => void {
 
   listen(categorySelect, "change", () => {
     state.category = categorySelect.value;
+    resetPaging();
+    void loadCatalog();
+  });
+
+  listen(compatToggle.input, "change", () => {
+    // 勾上 = 只看当前版本能装的（后端默认）；取消 = 全部，显式发 compat=all。
+    state.compatMode = compatToggle.input.checked ? "compatible" : "all";
+    // 兼容性口径变了，旧游标指向的是一份不同的结果集：回到第一页重来。
     resetPaging();
     void loadCatalog();
   });

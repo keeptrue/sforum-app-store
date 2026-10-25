@@ -10,7 +10,7 @@ export function el(tag: string, className?: string, text?: string): HTMLElement 
 
 export function badge(
   label: string,
-  tone: "neutral" | "ok" | "bad" | "warn" | "muted" = "neutral",
+  tone: "neutral" | "ok" | "bad" | "warn" | "muted" | "accent" = "neutral",
 ): HTMLElement {
   const className = tone === "neutral" ? "sfstore__badge" : `sfstore__badge sfstore__badge--${tone}`;
   return el("span", className, label);
@@ -32,6 +32,25 @@ export function fieldEl(labelText: string, control: HTMLElement, extraClass?: st
   const wrap = el("label", extraClass ? `sfstore__field ${extraClass}` : "sfstore__field");
   wrap.append(el("span", "sfstore__label", labelText), control);
   return wrap;
+}
+
+/**
+ * 文字开关：`<label class="sfstore__toggle"><input type="checkbox" class="sfstore__toggle-input">
+ * <span class="sfstore__toggle-text">…</span></label>`。
+ *
+ * 手写 ESM 没有 Host 图标运行时，开关本身就是文字，不用 emoji，也不画 SVG。返回输入框是因为
+ * 调用方要读 `checked` 并挂 `change`；展示/隐藏由 label 的 `hidden` 控制。
+ */
+export function toggleEl(
+  labelText: string,
+  options: { checked?: boolean } = {},
+): { label: HTMLLabelElement; input: HTMLInputElement } {
+  const label = el("label", "sfstore__toggle") as HTMLLabelElement;
+  const input = el("input", "sfstore__toggle-input") as HTMLInputElement;
+  input.type = "checkbox";
+  input.checked = options.checked === true;
+  label.append(input, el("span", "sfstore__toggle-text", labelText));
+  return { label, input };
 }
 
 export function selectEl(

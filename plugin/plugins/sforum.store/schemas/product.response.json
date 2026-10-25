@@ -89,6 +89,12 @@
                 "null"
               ]
             },
+            "socialImageUrl": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "repoUrl": {
               "type": [
                 "string",
@@ -97,6 +103,32 @@
             },
             "latestVersion": {
               "type": "string"
+            },
+            "installed": {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "version",
+                    "status"
+                  ],
+                  "properties": {
+                    "version": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string"
+                    }
+                  }
+                }
+              ]
+            },
+            "updateAvailable": {
+              "type": "boolean"
             },
             "platforms": {
               "type": "array",

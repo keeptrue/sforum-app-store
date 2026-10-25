@@ -22,6 +22,8 @@ paths:
         - { name: category, in: query, schema: { type: string } }
         - { name: cursor, in: query, schema: { type: string } }
         - { name: limit, in: query, schema: { type: integer } }
+        # 宿主版本可用时的兼容性过滤强度：compatible 只列能装的（默认），all 全量。
+        - { name: compat, in: query, schema: { type: string, enum: [compatible, all], default: compatible } }
       responses:
         "200":
           description: 目录页

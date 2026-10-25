@@ -15,11 +15,22 @@
           "extension.install"
         ],
         "icon": "i-lucide-store",
-        "label": "应用商城",
+        "label": "商城",
         "menu": true,
         "order": 30,
         "path": "/catalog",
         "view": "component"
+      },
+      {
+        "description": "配置商城地址与默认频道；保存、重置与脱敏由宿主负责。",
+        "group": "应用商城",
+        "icon": "i-lucide-settings-2",
+        "label": "设置",
+        "menu": true,
+        "order": 40,
+        "path": "/settings",
+        "permission": "extension.plugin.manage",
+        "view": "settings"
       }
     ]
   },
@@ -28,7 +39,7 @@
     "url": "https://github.com/zhuchunshu/sforum"
   },
   "backend": {
-    "digest": "8f219c145ceb471a7a294da0f1c023333d634565b30cf6a6b53adf8eda64362d",
+    "digest": "b51abc957439d62ba87b49d375204b90f714568292735a0c8bf34149e317b67f",
     "entry": "backend/plugin",
     "hostApiVersion": "sforum.host@2",
     "protocolVersion": 2,
@@ -37,7 +48,8 @@
   "capabilities": [
     "host.api",
     "settings.own",
-    "net.outbound"
+    "net.outbound",
+    "extensions.read"
   ],
   "description": "在论坛后台浏览 SForum 应用商城，并把选中的插件或主题交给宿主安装（只暂存）。",
   "id": "sforum.store",
@@ -45,12 +57,51 @@
     "langs": "manifest/langs",
     "settings": "manifest/settings.json"
   },
+  "lifecycle": {
+    "contractVersion": "sforum.store.lifecycle@1",
+    "disable": {
+      "checkpointSchema": "sforum.store.lifecycle.checkpoint@1",
+      "execute": "sforum.store.lifecycle.disable.execute",
+      "plan": "sforum.store.lifecycle.disable.plan",
+      "progressSchema": "sforum.store.lifecycle.progress@1"
+    },
+    "enable": {
+      "checkpointSchema": "sforum.store.lifecycle.checkpoint@1",
+      "execute": "sforum.store.lifecycle.enable.execute",
+      "plan": "sforum.store.lifecycle.enable.plan",
+      "progressSchema": "sforum.store.lifecycle.progress@1"
+    },
+    "install": {
+      "checkpointSchema": "sforum.store.lifecycle.checkpoint@1",
+      "execute": "sforum.store.lifecycle.install.execute",
+      "plan": "sforum.store.lifecycle.install.plan",
+      "progressSchema": "sforum.store.lifecycle.progress@1"
+    },
+    "rollback": {
+      "checkpointSchema": "sforum.store.lifecycle.checkpoint@1",
+      "execute": "sforum.store.lifecycle.rollback.execute",
+      "plan": "sforum.store.lifecycle.rollback.plan",
+      "progressSchema": "sforum.store.lifecycle.progress@1"
+    },
+    "uninstall": {
+      "checkpointSchema": "sforum.store.lifecycle.checkpoint@1",
+      "execute": "sforum.store.lifecycle.uninstall.execute",
+      "plan": "sforum.store.lifecycle.uninstall.plan",
+      "progressSchema": "sforum.store.lifecycle.progress@1"
+    },
+    "upgrade": {
+      "checkpointSchema": "sforum.store.lifecycle.checkpoint@1",
+      "execute": "sforum.store.lifecycle.upgrade.execute",
+      "plan": "sforum.store.lifecycle.upgrade.plan",
+      "progressSchema": "sforum.store.lifecycle.progress@1"
+    }
+  },
   "manifestVersion": 3,
   "name": "应用商城",
   "openapi": [
     {
       "contractVersion": "sforum.store.openapi.routes@1",
-      "digest": "81ee8950d958b3ec443ff13325d6b973bba899a350a59e762548080e87a15938",
+      "digest": "8cc0443afeb6ec23cf15024d9e0332120e632bfc76d526d25cb223e68a43f777",
       "id": "sforum.store.file.openapi-routes",
       "namespace": "sforum.store.api",
       "path": "openapi/routes.yaml"
@@ -58,32 +109,32 @@
   ],
   "packageFiles": [
     {
-      "digest": "8f219c145ceb471a7a294da0f1c023333d634565b30cf6a6b53adf8eda64362d",
+      "digest": "b51abc957439d62ba87b49d375204b90f714568292735a0c8bf34149e317b67f",
       "id": "sforum.store.file.backend",
       "kind": "executable",
       "path": "backend/plugin"
     },
     {
-      "digest": "b2d3ea9ee8fcb33b5994ada62f6497a3086c90aa2abb94459e14a0d60f6ff1c5",
+      "digest": "11682c115212189f898a64387656c39bdb2872a0295192943ce85f82f1a77e7e",
       "id": "sforum.store.file.admin",
       "kind": "frontend",
       "path": "frontend/admin/dist/catalog.mjs"
     },
     {
-      "digest": "4c64a6ba05298dca8b167c3c6d28cb2de77409ecbfdbf9a4e2236b27037419d5",
+      "digest": "7b6dce31f5935de514a6c5490baa6017c74b71e87c0e3f3b9dccf8fd5be898d5",
       "id": "sforum.store.asset.admin-style",
       "kind": "asset",
       "path": "frontend/admin/dist/catalog.css"
     },
     {
-      "digest": "fde035c09e5af095f60e066e5dfde34ac2b890eaa73f8855fc7546aa5dd9d7f7",
+      "digest": "686bce5695249ae7019fba62322a9ce85f596c6ce3d706c83d1cf3b9e00196c7",
       "id": "sforum.store.catalog.response",
       "kind": "schema",
       "path": "schemas/catalog.response.json",
       "version": "1"
     },
     {
-      "digest": "b185d7f8fa89cd02cba7dd4be19eda71191bd532672b43a9c9d054eb38e03f95",
+      "digest": "4ba2f4faf0ee3cf187f7ed0a86b140cb10e4d473b230c1ceaac398617d36c9cb",
       "id": "sforum.store.product.response",
       "kind": "schema",
       "path": "schemas/product.response.json",
@@ -104,7 +155,7 @@
       "version": "1"
     },
     {
-      "digest": "81ee8950d958b3ec443ff13325d6b973bba899a350a59e762548080e87a15938",
+      "digest": "8cc0443afeb6ec23cf15024d9e0332120e632bfc76d526d25cb223e68a43f777",
       "id": "sforum.store.file.openapi-routes",
       "kind": "openapi",
       "path": "openapi/routes.yaml"
@@ -168,7 +219,7 @@
       "timeoutMs": 15000
     }
   ],
-  "sforumVersion": ">=1.0.0",
+  "sforumVersion": "\u003e=1.0.0",
   "type": "plugin",
   "url": "https://github.com/zhuchunshu/sforum-app-store",
   "version": "0.1.0"

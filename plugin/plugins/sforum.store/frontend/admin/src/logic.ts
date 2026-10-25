@@ -12,6 +12,8 @@ import type {
   CompatibilityView,
   ConstraintChipView,
   HostInstallRequest,
+  InstalledExtension,
+  InstalledView,
   InstallUrlResponseDto,
   Kind,
   PlatformDto,
@@ -40,6 +42,12 @@ export const CORE_INSTALL_PATH = "/extensions/install";
 export const DIGEST_PREFIX_LENGTH = 12;
 
 export type ChannelChoice = "stable" | "all";
+
+/**
+ * 兼容性过滤口径。`compatible` 是后端的默认值，所以页面不发送它；`all` 才显式追加
+ * `compat=all`。宿主没给版本时后端本来就不过滤，页面也把开关藏起来（见 catalog.ts）。
+ */
+export type CompatMode = "compatible" | "all";
 
 /** 「含预发布」 sends no `channel` at all: the store counts both channels when the
  * parameter is absent, while `channel=beta` would hide every stable release. */
@@ -73,11 +81,14 @@ export type CatalogQueryInput = {
   channel: ChannelChoice;
   category: string;
   cursor: string | null;
+  compatMode: CompatMode;
 };
 
 /** `GET /api/store/catalog` with the parameter order the plugin backend proxies. */
 export function buildCatalogPath(input: CatalogQueryInput): string {
   const params = new URLSearchParams();
+  // `compatible` 是后端默认值：只在「全部」时显式发出去，免得两份默认值各说各话。
+  if (input.compatMode === "all") params.set("compat", "all");
   if (input.channel === "stable") params.set("channel", "stable");
   const query = input.query.trim();
   if (query) params.set("q", query);
@@ -253,6 +264,27 @@ export function normalizeCompatibility(value: unknown): CompatibilityDto {
   };
 }
 
+/**
+ * 内容寻址资产地址（封面 / 图标）。商城已经拼成绝对地址，这里只放行 http(s)：
+ * `javascript:` / `data:` 之类不该进 `<img src>`，不合法一律当「没有」，页面会走下一级回退。
+ */
+function normalizeAssetUrl(value: unknown): string | null {
+  const url = stringOr(value).trim();
+  return /^https?:\/\//i.test(url) ? url : null;
+}
+
+/**
+ * 宿主已装清单条目。没有版本号的 `installed` 撑不起「已安装 v…」这句话，按未装处理：
+ * 宁可少一个徽标，也不在页面上写一句查不到出处的话。
+ */
+function normalizeInstalled(value: unknown): InstalledExtension | null {
+  const record = asRecord(value);
+  if (!record) return null;
+  const version = stringOr(record.version).trim();
+  if (!version) return null;
+  return { version, status: stringOr(record.status).trim() };
+}
+
 function normalizePlatforms(value: unknown): PlatformDto[] {
   if (!Array.isArray(value)) return [];
   const result: PlatformDto[] = [];
@@ -281,7 +313,11 @@ function normalizeItem(value: unknown): CatalogItemDto | null {
     kind,
     summary: stringOr(record.summary).trim(),
     category: typeof record.category === "string" ? record.category : null,
-    iconUrl: typeof record.iconUrl === "string" ? record.iconUrl : null,
+    iconUrl: normalizeAssetUrl(record.iconUrl),
+    socialImageUrl: normalizeAssetUrl(record.socialImageUrl),
+    installed: normalizeInstalled(record.installed),
+    // 旧后端没有这个字段：false 而不是 undefined，视图层不必再猜。
+    updateAvailable: record.updateAvailable === true,
     latestVersion: stringOr(record.latestVersion).trim(),
     sforumVersion: stringOr(record.sforumVersion).trim(),
     updatedAt: stringOr(record.updatedAt),
@@ -391,7 +427,10 @@ export function parseProduct(payload: unknown): ProductDto {
     kind: record.kind === "theme" ? "theme" : "plugin",
     summary: stringOr(record.summary).trim(),
     category: typeof record.category === "string" ? record.category : null,
-    iconUrl: typeof record.iconUrl === "string" ? record.iconUrl : null,
+    iconUrl: normalizeAssetUrl(record.iconUrl),
+    socialImageUrl: normalizeAssetUrl(record.socialImageUrl),
+    installed: normalizeInstalled(record.installed),
+    updateAvailable: record.updateAvailable === true,
     repoUrl: typeof record.repoUrl === "string" ? record.repoUrl : null,
     latestVersion: stringOr(record.latestVersion).trim(),
     readme: normalizeReadme(record.readme),
@@ -455,14 +494,19 @@ export function compatibilityView(
  * The catalogue's own `compatibility`, rendered once above the list. The plugin never
  * forwards a host version (SForum D9), so `unknown` is the normal case and deserves a
  * sentence instead of a badge on every row.
+ *
+ * 有判决时 `compatMode` 才有意义：一旦操作者切到「全部」，「已按宿主版本筛出一份可安装的
+ * 目录」就不成立了，那种口径需要自己的一句说明。
  */
 export function compatibilityNote(
   input: CompatibilityDto | null,
   copy: Copy = ZH_COPY,
+  compatMode: CompatMode = "compatible",
 ): string {
   if (!input) return "";
   if (input.estimated) return copy.t("compatEstimatedNote");
   if (input.status === "unknown") return copy.t("compatUnjudgedNote");
+  if (compatMode === "all") return copy.t("compatAllNote");
   return copy.t("compatFilteredNote");
 }
 
@@ -503,6 +547,42 @@ export function digestPrefix(digest: string, length = DIGEST_PREFIX_LENGTH): str
   return digest.trim().slice(0, length);
 }
 
+/**
+ * 宿主状态只在详情里作次要说明：`enabled` 与安装徽标重复，说不说都一样；`disabled` 与
+ * `installed`（装了还没启用）才需要一句人话。其它状态原样带出，不替宿主翻译。
+ */
+export function installedStatusNote(status: string, copy: Copy = ZH_COPY): string | null {
+  if (!status || status === "enabled") return null;
+  if (status === "disabled") return copy.t("installedStatusDisabled");
+  if (status === "installed") return copy.t("installedStatusUnenabled");
+  return copy.t("installedStatusOther", { status });
+}
+
+/**
+ * 「已安装 v…」是宿主清单里的事实，不是本页安装流程的结论；「可更新至 v…」只在后端判定
+ * `updateAvailable` 且有 latestVersion 时出现。没有安装条目就不生成任何标记，哪怕后端
+ * 单独发了 `updateAvailable: true`（没有已装版本，这句话就无从谈起）。
+ */
+export function installedView(
+  input: {
+    installed: InstalledExtension | null;
+    latestVersion: string;
+    updateAvailable: boolean;
+  },
+  copy: Copy = ZH_COPY,
+): InstalledView | null {
+  if (!input.installed) return null;
+  const latest = input.latestVersion.trim();
+  return {
+    version: input.installed.version,
+    versionLabel: copy.t("installedBadge", { version: input.installed.version }),
+    updateLabel:
+      input.updateAvailable && latest ? copy.t("updateBadge", { version: latest }) : null,
+    status: input.installed.status,
+    statusNote: installedStatusNote(input.installed.status, copy),
+  };
+}
+
 function pad(value: number): string {
   return value < 10 ? `0${value}` : `${value}`;
 }
@@ -532,8 +612,17 @@ export function toCatalogItemView(item: CatalogItemDto, copy: Copy = ZH_COPY): C
     constraint: constraintChip(item.sforumVersion),
     platformLabels: platformLabels(item.platforms, copy),
     compatibility: compatibilityView(item.compatibility, copy),
-    iconUrl: typeof item.iconUrl === "string" && item.iconUrl ? item.iconUrl : null,
+    socialImageUrl: item.socialImageUrl ?? null,
+    iconUrl: item.iconUrl ?? null,
     initial: initialOf(item.name),
+    installed: installedView(
+      {
+        installed: item.installed,
+        latestVersion: item.latestVersion,
+        updateAvailable: item.updateAvailable,
+      },
+      copy,
+    ),
   };
 }
 
@@ -572,8 +661,16 @@ export function toProductView(product: ProductDto, copy: Copy = ZH_COPY): Produc
     summary: product.summary,
     readme: product.readme,
     categoryLabel: categoryLabel(product.category, copy),
-    iconUrl:
-      typeof product.iconUrl === "string" && product.iconUrl ? product.iconUrl : null,
+    socialImageUrl: product.socialImageUrl ?? null,
+    iconUrl: product.iconUrl ?? null,
+    installed: installedView(
+      {
+        installed: product.installed,
+        latestVersion: product.latestVersion ?? "",
+        updateAvailable: product.updateAvailable,
+      },
+      copy,
+    ),
     latestVersion: product.latestVersion ?? "",
     releases: product.releases.map((release) => toReleaseView(release, copy)),
     platforms: platformLabels(product.platforms ?? [], copy),

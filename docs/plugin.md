@@ -5,12 +5,31 @@
 
 ## 1. 宿主要求
 
-页面内安装依赖宿主的**页面级宿主动作**（清单 `hostActions: ["extension.install"]` +
-`bridge.installExtension`），落地于 SForum `10c2b21e8`（2026-10-24）。更旧的宿主会拒绝
-含 `hostActions` 的清单。插件本身会特性检测：宿主没有这个 bridge 成员时，安装按钮隐藏，
-只提供可复制的签名链接。
+| 能力 | 宿主面 | 缺失时的表现 |
+| --- | --- | --- |
+| 页面内安装 | 页面级宿主动作 `hostActions: ["extension.install"]` + `bridge.installExtension`（SForum `10c2b21e8`，2026-10-24） | 清单被拒（更旧的宿主）或安装按钮隐藏、只给可复制的签名链接 |
+| 菜单分组 | 清单 `admin.pages[].group`（同一扩展的多个 menu 页收进一个可展开一级菜单） | 两个页平铺在「扩展管理」里，功能不受影响 |
+| 宿主版本 | v2 握手 `host_build` → 插件 `Server.HostBuild()` | 目录恒为 `compatibility=unknown`、不过滤、不显示「兼容」判词 |
+| 已装清单 | Query `sforum.core.extensions.inventory.list`（能力 `extensions.read`，中等风险） | 不显示「已安装 / 可更新」，其余功能不受影响 |
 
-## 2. 安装
+三条都是**特性检测 + 降级**，不是硬依赖：旧宿主只会少功能，不会把页面打崩。
+
+## 2. 菜单与页面
+
+侧栏一级「应用商城」（可展开），两个子项：
+
+| 子项 | 路径 | 形态 |
+| --- | --- | --- |
+| 商城 | `/catalog` | 预构建 Admin Micro-frontend（`view=component`） |
+| 设置 | `/settings` | 宿主 Schema UI（`view=settings`），字段来自 `manifest/settings.json` |
+
+一级分组由清单的 `group: "应用商城"` 声明，容器归宿主；组图标取组内 `order` 最小那一页的
+图标。设置页声明 `permission: "extension.plugin.manage"`，与宿主
+`canManageExtensionSettings` 的判定对齐：没有插件管理权限的管理员看不到这个子项。
+
+`admin.entry` 是 `/catalog`，扩展列表里的「管理」按钮直达商城页。
+
+## 3. 安装
 
 **方式 A：从包安装（推荐）**
 
@@ -27,9 +46,9 @@ APP_ENV=development EXTERNAL_EXTENSION_ROOTS=/path/to/sforum-app-store/plugin \
   go run ./cmd/sforum serve     # 具体启动命令以 SForum 文档为准
 ```
 
-开发装配只用于本地；生产用方式 A。
+开发装配只用于本地；生产用方式 A。**源根只在 API 启动时读取**，改完 `.env` 要重启 API。
 
-## 3. 设置
+## 4. 设置
 
 论坛后台 → 应用商城 → 设置（Schema UI，两个字段）：
 
@@ -41,13 +60,40 @@ APP_ENV=development EXTERNAL_EXTENSION_ROOTS=/path/to/sforum-app-store/plugin \
 设置值由插件后端通过宿主的 own-settings 查询读取，缓存在进程内 60 秒；管理员改完设置后
 最迟一分钟生效（重开管理页即可）。
 
-## 4. 安装到底做了什么
+## 5. 兼容性判定
+
+插件后端在 v2 握手时拿到宿主的 `coreVersion` / `buildVersion`，并把它们作为 `sforum` /
+`sforumBuild` 转发给商城的目录与详情（**只有握手快照一个来源**：调用方带来的同名查询参数
+一律丢弃，插件不推断、不硬编码宿主版本）。商城对每个版本的 `sforumVersion` 约束求值，返回
+逐条 `compatibility` 与页级结论：
+
+- `compatible` / `incompatible`：有判词，行内显示徽标；
+- `unknown`：宿主没给版本（旧宿主、握手失败），目录不过滤、只展示每个扩展的约束文本，
+  此时页面**不显示**兼容开关——过滤本来就不生效，放个开关只会骗人。
+
+页面顶部有「只看当前版本可安装」开关，默认开启（请求带 `compat=compatible`，商城滤掉装不上的）；
+关掉后切到 `compat=all`，列出全部并逐行打判词。判词与过滤都是商城的结论，core 在安装/启用
+时的拒绝仍是最终裁判。
+
+## 6. 已安装 / 可更新
+
+插件后端通过宿主 Query `sforum.core.extensions.inventory.list`（能力 `extensions.read`）读取
+**去敏**的已装清单（`id` / `version` / `type` / `status`），按扩展 id 与目录条目对齐：
+
+- 命中：卡片与详情显示「已安装 v…」；`installed < latestVersion` 时再显示「可更新至 v…」；
+  详情里额外说明 `disabled`（已在宿主停用）与 `installed`（已装、尚未启用）。
+- 未命中 / 能力未授予 / 旧宿主：不显示任何已装信息，目录本身照常工作。
+
+读取结果缓存 60 秒（失败也缓存，避免一次能力缺失让每个目录请求都等满超时）。徽标来源是
+**宿主清单事实**，与安装流程的成功语义无关——后者仍然只写「已暂存」。
+
+## 7. 安装到底做了什么
 
 1. 管理页向后端要 `{url, sha256, size, expiresAt}`（商城签名短链，30 分钟有效）。
 2. 管理页调 `bridge.installExtension({url, sha256, expectedExtensionId, expectedType,
    expectedVersion})`；宿主做权限预检、弹自己的确认框、同步下载并校验摘要、比对清单身份。
 3. 成功 = **已暂存（staged）**；启用与信任由管理员在 core 的扩展页面完成。
-   页面文案只写「已暂存」，不写「已安装」「已更新」「已验证构建」。
+   安装流程的文案只写「已暂存」，不写「已安装」「已更新」「已验证构建」。
 4. v1 是同步的：安装期间离开页面会取消（`install_cancelled`），所以页面写明
    「安装期间不要关闭页面」。
 
@@ -61,20 +107,20 @@ APP_ENV=development EXTERNAL_EXTENSION_ROOTS=/path/to/sforum-app-store/plugin \
 「请求无效」，而不是下载失败。服务端的 `install-from-url` 另有自己的边界：只能取公网 HTTPS
 （`AllowHTTP`/`AllowPrivate` 只在宿主测试里打开），本机回环地址会被它拒绝。
 
-## 5. 网络要求
+## 8. 网络要求
 
 - 论坛服务器（插件进程）→ 商城：**出站 HTTPS**。目录、详情、签发三个代理都走它。
 - 论坛服务器 → GitHub/对象存储：由**宿主**在安装时访问（插件不下载包）。
 - 管理页：数据只走插件自己的同源路由（`/api/v1/extensions/sforum.store/api/store/*`），不发跨域
-  请求、不加载外部字体。产品图标是唯一的外部资源：插件后端把它拼成绝对地址
+  请求、不加载外部字体。产品图标与品牌分享卡是唯一的外部资源：插件后端把它们拼成绝对地址
   （`<商城>/api/assets/<sha256>`），浏览器直连商城取图 —— 图片是公开的内容寻址资产，**不经过
-  论坛做代理**（商城不进论坛请求链路）。加载失败时退回字母块，不显示破图。
+  论坛做代理**（商城不进论坛请求链路）。加载失败按「分享卡 → 图标 → 字母块」逐级回退，不显示破图。
   若宿主管理页的 CSP 禁掉 `img-src` 到商城域名，表现就是「目录里全是字母块」，其余功能不受影响。
 
 商城必须能从论坛服务器访问到，且证书有效；插件只接受 `https://` 基址（设置里填 `http://`
 会被忽略并显示未配置）。
 
-## 6. 故障排查
+## 9. 故障排查
 
 | 现象 | 原因 | 处理 |
 | --- | --- | --- |
@@ -83,11 +129,13 @@ APP_ENV=development EXTERNAL_EXTENSION_ROOTS=/path/to/sforum-app-store/plugin \
 | 提示「当前宿主不支持页面内安装」 | 宿主早于 `10c2b21e8`，没有 `bridge.installExtension` | 升级宿主，或复制签名链接到扩展安装页手动安装 |
 | 安装报 `extension.expected_mismatch` | ZIP 里的清单与目录声明的 id/type/version 不一致 | 目录数据过期或包被换过；刷新目录后重试 |
 | 安装报 `install_permission_denied` | 当前管理员没有扩展管理权限 | 交给有 `extension.plugin.manage` / `extension.theme.manage` 的管理员 |
-| 目录顶部写「本页只展示 sforumVersion 约束」 | 宿主没有暴露自身版本（D9），商城无法判断兼容 | 正常现象；行内不再逐条打判词，改显示每个扩展最新版本的约束，core 安装时会兜底拒绝 |
-| 目录行没有「兼容 / 不兼容」 | 同上：没有宿主版本就没有判词 | 同上。D9 放开后插件后端会转发 `sforum` / `sforumBuild`，判词自动恢复 |
+| 目录顶部写「宿主没有暴露版本」 | 握手没带 `host_build`（旧宿主），或 `coreVersion` 为空 | 正常降级；升级宿主后判词与开关自动恢复 |
+| 目录行没有「兼容 / 不兼容」 | 同上：没有宿主版本就没有判词 | 同上；core 在安装/启用时仍会兜底拒绝 |
+| 开关「只看当前版本可安装」不见了 | 页级结论是 `unknown` | 设计如此：过滤不生效时不给假开关 |
+| 看不到「已安装 / 可更新」 | 清单没声明 `extensions.read`、能力未授予，或宿主过旧 | 启用时确认能力已授予；旧宿主无此面 |
 | 数据带「更新于 X」 | 商城不可达，用了 24 小时内的缓存 | 恢复商城连通性后刷新 |
 
-## 7. 构建与校验（仓库内）
+## 10. 构建与校验（仓库内）
 
 ```bash
 bash plugin/scripts/build.sh                       # Go 二进制 + 管理页 + 摘要 + 清单校验
@@ -95,11 +143,15 @@ cd plugin/plugins/sforum.store/backend && go test ./...
 bun test plugin/plugins/sforum.store/frontend/admin/src
 ```
 
+`brand/` 下的图标与社交卡由 SForum 仓的 `scripts/brand/` 生成（spec 里登记为 external 条目），
+不进 `packageFiles`，但会改变包树摘要，所以改完要重新 `extension package`。
+
 发布前用宿主自己的命令过闸（只读使用 SForum 检出）：
 
 ```bash
 cd <SForum>/apps/api
 go run ./cmd/sforum extension validate <pkg>
 go run ./cmd/sforum extension test <pkg>
+go run ./cmd/sforum extension brand check <pkg>
 go run ./cmd/sforum extension package <pkg> --exclude-source -o /tmp/sforum.store.zip
 ```

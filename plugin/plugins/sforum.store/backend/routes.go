@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	pluginv2 "github.com/zhuchunshu/sforum/apps/api/sdk/plugin/v2"
@@ -25,17 +26,29 @@ const (
 	schemaErrorResponse      = "sforum.store.error@1"
 )
 
-// storeServer 只承接路由分发；业务在 handlers.go，上游访问在 upstream.go。
+// storeServer 只承接路由分发；业务在 handlers.go，上游访问在 upstream.go，
+// 宿主已装清单在 inventory.go。
 type storeServer struct {
 	*pluginv2.Server
 
-	store         *storeClient
-	settingsCache settingsCache
+	store          *storeClient
+	settingsCache  settingsCache
+	inventoryCache inventoryCache
 
 	// settingsOverride 只给测试用：生产恒为 nil，设置一律来自 Host 的
 	// own-settings 查询（settings.go）。测试不启动 go-plugin 运行时，
 	// 因此没有已握手的 Host 可读。
 	settingsOverride *storeSettings
+
+	// hostBuildOverride / inventoryFetch 也只给测试用：生产恒为 nil。
+	// 宿主版本来自 v2 握手快照（upstream.go），已装清单来自 Host Query
+	// （inventory.go），两者都需要真实的宿主运行时。
+	hostBuildOverride *hostBuild
+	inventoryFetch    inventoryPageFetcher
+
+	// 握手时冻结的宿主版本只读一次：进程生命周期内不可能变化。
+	hostBuildOnce  sync.Once
+	hostBuildValue hostBuild
 }
 
 func newStoreServer() (*storeServer, error) {

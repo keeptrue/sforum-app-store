@@ -58,7 +58,7 @@ func (s *storeServer) handleCatalog(ctx context.Context, request *pluginwire.Rou
 		return errorResponse(request.GetContext(), schemaCatalogResponse, http.StatusServiceUnavailable, codeNotConfigured, messageNotConfigured)
 	}
 
-	query, err := catalogQueryFromRequest(request, settings)
+	query, err := catalogQueryFromRequest(request, settings, s.hostBuildSnapshot())
 	if err != nil {
 		return errorResponse(request.GetContext(), schemaCatalogResponse, http.StatusBadRequest, codeInvalidRequest, err.Error())
 	}
@@ -71,7 +71,7 @@ func (s *storeServer) handleCatalog(ctx context.Context, request *pluginwire.Rou
 		log.Printf("%s: serving stale catalog fetched at %s", routeCatalogID, fetchedAtString(result.fetchedAt))
 	}
 
-	values, dropped := catalogResponseValues(result, settings.CatalogBaseURL)
+	values, dropped := catalogResponseValues(result, settings.CatalogBaseURL, s.installed(ctx, request.GetContext()))
 	if dropped > 0 {
 		log.Printf("%s: dropped %d catalog items with unexpected shape", routeCatalogID, dropped)
 	}
@@ -89,7 +89,7 @@ func (s *storeServer) handleProduct(ctx context.Context, request *pluginwire.Rou
 		return errorResponse(request.GetContext(), schemaProductResponse, http.StatusBadRequest, codeInvalidRequest, "slug 缺失或不是合法的产品标识。")
 	}
 
-	result, err := s.store.product(ctx, settings.CatalogBaseURL, slug)
+	result, err := s.store.product(ctx, settings.CatalogBaseURL, slug, s.hostBuildSnapshot())
 	if err != nil {
 		return failureResponse(request.GetContext(), routeProductID, productFailure(err), err)
 	}
@@ -97,7 +97,7 @@ func (s *storeServer) handleProduct(ctx context.Context, request *pluginwire.Rou
 		log.Printf("%s: serving stale product fetched at %s", routeProductID, fetchedAtString(result.fetchedAt))
 	}
 
-	values, dropped, err := productResponseValues(result, settings.CatalogBaseURL)
+	values, dropped, err := productResponseValues(result, settings.CatalogBaseURL, s.installed(ctx, request.GetContext()))
 	if err != nil {
 		return failureResponse(request.GetContext(), routeProductID, productFailure(err), err)
 	}
@@ -175,9 +175,10 @@ func failureResponse(
 	return errorResponse(ctx, responseSchemaForRoute(routeID), failure.status, failure.code, failure.message)
 }
 
-// catalogQueryFromRequest 只接受契约里的五个过滤参数：调用方带来的 os/arch/
-// sforum/sforumBuild 全部丢弃，channel 缺省时用设置里的默认频道。
-func catalogQueryFromRequest(request *pluginwire.RouteRequest, settings storeSettings) (catalogQuery, error) {
+// catalogQueryFromRequest 只接受契约里的过滤参数：调用方带来的 os/arch 一律丢弃
+// （目标平台是本进程），sforum/sforumBuild 也永远不由调用方决定——版本只来自握手
+// 快照 build。channel 缺省时用设置里的默认频道。
+func catalogQueryFromRequest(request *pluginwire.RouteRequest, settings storeSettings, build hostBuild) (catalogQuery, error) {
 	params := request.GetQueryParameters()
 
 	channel := strings.TrimSpace(params["channel"])
@@ -192,7 +193,17 @@ func catalogQueryFromRequest(request *pluginwire.RouteRequest, settings storeSet
 		channel = channelStable
 	}
 
-	query := catalogQuery{Channel: channel}
+	compat, err := catalogCompat(params["compat"])
+	if err != nil {
+		return catalogQuery{}, err
+	}
+
+	query := catalogQuery{
+		Channel:     channel,
+		Compat:      compat,
+		SForum:      build.CoreVersion,
+		SForumBuild: build.BuildVersion,
+	}
 
 	if query.Q = strings.TrimSpace(params["q"]); utf8.RuneCountInString(query.Q) > maxSearchLength {
 		return catalogQuery{}, fmt.Errorf("关键词不能超过 %d 个字符。", maxSearchLength)
@@ -210,6 +221,27 @@ func catalogQueryFromRequest(request *pluginwire.RouteRequest, settings storeSet
 	}
 	query.Limit = limit
 	return query, nil
+}
+
+// compat 参数与 compatibility.status 共享 compatible 这个字面值，但语义不同：
+// 一个是过滤强度，一个是判定结果。
+const (
+	compatModeCompatible = "compatible"
+	compatModeAll        = "all"
+)
+
+// catalogCompat 是 compat 参数的唯一入口：只接受契约里的两个值，空值取默认
+// compatible。非法值直接拒绝，不做静默回退 —— 否则「我要 all」会被偷偷改回
+// compatible，页面看到的是被过滤过的目录却以为是全量。
+func catalogCompat(raw string) (string, error) {
+	switch value := strings.TrimSpace(raw); value {
+	case "":
+		return compatModeCompatible, nil
+	case compatModeCompatible, compatModeAll:
+		return value, nil
+	default:
+		return "", errors.New("compat 只能是 compatible 或 all。")
+	}
 }
 
 func catalogLimit(raw string) (int, error) {

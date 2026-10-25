@@ -320,3 +320,61 @@ func TestCatalogConcurrentInvocations(t *testing.T) {
 		t.Fatalf("upstream hits = %d, want at least one fetch", hits)
 	}
 }
+
+// TestCatalogQueryValuesKeepUnknownHostVersionOut 是转发规则的单元测试：宿主版本
+// 未知时 sforum/sforumBuild 一律不出现，已知时原样出现在查询里。
+func TestCatalogQueryValuesKeepUnknownHostVersionOut(t *testing.T) {
+	known := catalogQuery{
+		Channel: channelStable, Limit: 18, Compat: compatModeCompatible,
+		SForum: "3.0.16", SForumBuild: "dev-abc12",
+	}
+	values := known.values()
+	if got := values.Get("sforum"); got != "3.0.16" {
+		t.Errorf("sforum = %q, want 3.0.16", got)
+	}
+	if got := values.Get("sforumBuild"); got != "dev-abc12" {
+		t.Errorf("sforumBuild = %q, want dev-abc12", got)
+	}
+	if got := values.Get("compat"); got != compatModeCompatible {
+		t.Errorf("compat = %q, want compatible", got)
+	}
+
+	unknown := catalogQuery{Channel: channelStable, Limit: 18, Compat: compatModeAll}
+	values = unknown.values()
+	for _, key := range []string{"sforum", "sforumBuild"} {
+		if values.Has(key) {
+			t.Errorf("unknown host version must not send %s: %v", key, values)
+		}
+	}
+	if got := values.Get("compat"); got != compatModeAll {
+		t.Errorf("compat = %q, want all", got)
+	}
+}
+
+// TestProductCacheIsKeyedByHostVersion：上游按宿主版本求值约束，缓存必须把版本
+// 算进键里，否则一台宿主的结论会被另一台读到。
+func TestProductCacheIsKeyedByHostVersion(t *testing.T) {
+	fake := newFakeUpstream(t, func(w http.ResponseWriter, r *http.Request, call int) {
+		writeUpstreamJSON(t, w, http.StatusOK, productFixture(), nil)
+	})
+	params := map[string]string{"slug": "demo-plugin"}
+
+	newServer := func(coreVersion string) *storeServer {
+		server := newBoundStoreServer(t, fake, storeSettings{Channel: channelStable})
+		stubHostBuild(server, coreVersion, "dev")
+		return server
+	}
+	assertStatus(t, invokeRoute(t, newServer("3.0.16"), routeProductID, params, nil), http.StatusOK)
+	assertStatus(t, invokeRoute(t, newServer("3.0.17"), routeProductID, params, nil), http.StatusOK)
+
+	if hits := fake.hits(); hits != 2 {
+		t.Fatalf("different host versions must not share a cache entry, hits = %d", hits)
+	}
+	calls := fake.calls()
+	if got := calls[0].Query.Get("sforum"); got != "3.0.16" {
+		t.Errorf("first sforum = %q, want 3.0.16", got)
+	}
+	if got := calls[1].Query.Get("sforum"); got != "3.0.17" {
+		t.Errorf("second sforum = %q, want 3.0.17", got)
+	}
+}

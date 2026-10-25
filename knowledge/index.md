@@ -20,7 +20,17 @@ HTTPS）；② 完整真实 provider 登录（缺 client secret 与论坛用户�
 
 ## Latest Handoff
 
-`sessions/2026-10-25-download-redirect-mode.md` —— 下载带宽不再是「要不要优化」，而是一个开关：
+`sessions/2026-10-25-store-menu-version-inventory.md` —— 插件从「一个 component 页」补成真正可运营的入口：
+`admin.pages` 两页同 `group=应用商城`（商城 `/catalog` + 设置 `/settings`，后者由宿主 Schema UI 渲染，
+`permission=extension.plugin.manage`），后台第一次能改商城地址；后端把 v2 握手拿到的
+`coreVersion`/`buildVersion` 作为 `sforum`/`sforumBuild` 转发（`compat` 开关默认 `compatible`），
+新增 `extensions.read` 读宿主已装清单产出「已安装/可更新」，`socialImageUrl` 进卡片封面，
+四个闸（validate/test/brand check/package）全绿、73 条前端测试全绿。**未闭环**：本机 dev 库上插件路由
+`admitted=false`（非 lifecycle V2 包换摘要后注册表不重发），补上 lifecycle V2 后启用卡在
+`extension lifecycle registry publication exact fence conflict`，需要宿主侧复位后重跑真机链路。
+决策 `decisions/2026-10-25-menu-version-and-inventory.md`。
+
+其前：`sessions/2026-10-25-download-redirect-mode.md` —— 下载带宽不再是「要不要优化」，而是一个开关：
 `STORE_DOWNLOAD_MODE=proxy|redirect`，默认 `proxy`（与之前逐字节一致）。`redirect` 且仓库公开时，
 `/api/v1/download/{token}` 回 `302` 到 GitHub 已签好的对象地址，商城不再搬字节；私有仓库继续
 代理（对象地址含仓库名与 tag）。取地址不取字节靠 `GithubAppClient.assetRedirectUrl`

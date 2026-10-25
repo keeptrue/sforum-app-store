@@ -58,8 +58,40 @@
                   "null"
                 ]
               },
+              "socialImageUrl": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "latestVersion": {
                 "type": "string"
+              },
+              "installed": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "version",
+                      "status"
+                    ],
+                    "properties": {
+                      "version": {
+                        "type": "string"
+                      },
+                      "status": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                ]
+              },
+              "updateAvailable": {
+                "type": "boolean"
               },
               "sforumVersion": {
                 "type": "string"

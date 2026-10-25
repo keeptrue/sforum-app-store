@@ -151,6 +151,36 @@
   font-size: 12px;
 }
 
+/* ---------- 兼容性开关（纯文字 + 复选框） ---------- */
+
+.sfstore__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--sfstore-text);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+/* `display: inline-flex` 会盖过 UA 的 `[hidden] { display: none }`，这里补回来。 */
+.sfstore__toggle[hidden] {
+  display: none;
+}
+
+.sfstore__toggle-input {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--sfstore-accent);
+  cursor: pointer;
+}
+
+.sfstore__toggle-text {
+  min-width: 0;
+}
+
 /* ---------- 主体两栏 ---------- */
 
 .sfstore__grid {
@@ -263,6 +293,29 @@
   font-size: 16px;
 }
 
+/* 封面：商城分享卡 1280×640，按 2:1 裁切（object-fit: cover，不拉伸、不留白边）。
+   列表里 96×48、详情头部 128×64。有简介的行本来就高于 48px，封面不撑高它；没有简介的行
+   最多高约 7px（48 对约 41 的行内文字）。加载失败时元素换成图标或字母块（见 view.ts），
+   这个盒子也随之消失。 */
+.sfstore__tile--cover {
+  width: 96px;
+  height: 48px;
+  aspect-ratio: 2 / 1;
+}
+
+.sfstore__tile--cover.sfstore__tile--lg {
+  width: 128px;
+  height: 64px;
+}
+
+.sfstore__cover-img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+}
+
 .sfstore__row-main {
   display: flex;
   flex-direction: column;
@@ -336,6 +389,13 @@
   border-color: currentColor;
   background: var(--sfstore-warn-soft);
   color: var(--sfstore-warn);
+}
+
+/* 可更新提示用强调色，但只有一枚小药丸；主按钮仍是实心 primary，不会被它盖过。 */
+.sfstore__badge--accent {
+  border-color: currentColor;
+  background: var(--sfstore-accent-soft);
+  color: var(--sfstore-accent);
 }
 
 /* ---------- 状态块 ---------- */

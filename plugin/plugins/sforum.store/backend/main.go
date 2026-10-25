@@ -12,5 +12,8 @@ func main() {
 	if err != nil {
 		log.Fatalf("configure sforum.store: %v", err)
 	}
+	// 清单 lifecycle.* 声明后宿主会走 V2 生命周期（换摘要时重新发布注册表）；
+	// 步骤实现见 lifecycle.go，全部是幂等 no-op。
+	server.WithRuntimeStreams(pluginv2.RuntimeStreams{Lifecycle: runLifecycle})
 	pluginv2.Serve(server)
 }

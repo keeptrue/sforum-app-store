@@ -147,6 +147,56 @@ type catalogQuery struct {
 	Category string
 	Cursor   string
 	Limit    int
+	// SForum / SForumBuild 是宿主在 v2 握手时冻结的 CoreVersion / BuildVersion。
+	// 未知（旧宿主没给 host_build）时两者都是空串：那两个参数根本不发出去，
+	// 上游据此保持 compatibility=unknown，插件也不替宿主猜一个版本。
+	SForum      string
+	SForumBuild string
+	// Compat 是兼容过滤强度（compatible / all）。上游只在拿到宿主版本时才真的
+	// 过滤，所以版本未知时发它不改变结果，也不会误删条目。
+	Compat string
+}
+
+// hostBuild 是宿主在 protocol v2 握手时冻结的构建身份（SDK: Server.HostBuild）。
+// CoreVersion 是兼容判定的唯一权威，BuildVersion 只用来识别 dev 构建；两者都为空
+// 表示宿主没给，调用方必须按 unknown 处理，不得补一个默认版本。
+type hostBuild struct {
+	CoreVersion  string
+	BuildVersion string
+}
+
+// hostBuildSnapshot 返回进程内唯一的宿主版本快照：SDK 保证握手后该值不再变化，
+// 所以只读一次。ok=false（旧宿主没有 host_build 字段）时返回零值，调用方因此不
+// 发送 sforum/sforumBuild。测试注入 hostBuildOverride 时直接返回它：测试不启动
+// go-plugin 运行时，没有已握手的 Host 可读。
+func (s *storeServer) hostBuildSnapshot() hostBuild {
+	if s.hostBuildOverride != nil {
+		return *s.hostBuildOverride
+	}
+	s.hostBuildOnce.Do(func() {
+		if s.Server == nil {
+			return
+		}
+		build, ok := s.HostBuild()
+		if !ok {
+			return
+		}
+		s.hostBuildValue = hostBuild{
+			CoreVersion:  strings.TrimSpace(build.CoreVersion),
+			BuildVersion: strings.TrimSpace(build.BuildVersion),
+		}
+	})
+	return s.hostBuildValue
+}
+
+// setHostVersion 只写非空的版本参数：空串是「宿主没给」，不能变成 sforum=。
+func setHostVersion(values url.Values, build hostBuild) {
+	if build.CoreVersion != "" {
+		values.Set("sforum", build.CoreVersion)
+	}
+	if build.BuildVersion != "" {
+		values.Set("sforumBuild", build.BuildVersion)
+	}
 }
 
 func (q catalogQuery) values() url.Values {
@@ -164,8 +214,10 @@ func (q catalogQuery) values() url.Values {
 	if q.Cursor != "" {
 		values.Set("cursor", q.Cursor)
 	}
-	// sforum / sforumBuild 永不出现：宿主没有暴露 CoreCompatibilityVersion（§6.2），
-	// 因此目录按 unknown 处理、不做兼容过滤。
+	setHostVersion(values, hostBuild{CoreVersion: q.SForum, BuildVersion: q.SForumBuild})
+	if q.Compat != "" {
+		values.Set("compat", q.Compat)
+	}
 	return values
 }
 
@@ -203,8 +255,12 @@ func (c *storeClient) catalog(ctx context.Context, base string, query catalogQue
 	return catalogResult{page: page, fetchedAt: fetchedAt, stale: stale}, nil
 }
 
-func (c *storeClient) product(ctx context.Context, base, slug string) (productResult, error) {
-	endpoint, err := baseEndpoint(base, upstreamProductsPath+url.PathEscape(slug), nil)
+// product 读产品详情。sforum/sforumBuild 与目录查询同源：宿主给了就带上，让上游
+// 按同一份版本面求值每个 release 的约束。
+func (c *storeClient) product(ctx context.Context, base, slug string, build hostBuild) (productResult, error) {
+	query := url.Values{}
+	setHostVersion(query, build)
+	endpoint, err := baseEndpoint(base, upstreamProductsPath+url.PathEscape(slug), query)
 	if err != nil {
 		return productResult{}, err
 	}
