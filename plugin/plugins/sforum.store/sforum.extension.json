@@ -1,0 +1,175 @@
+{
+  "admin": {
+    "entry": "/catalog",
+    "pages": [
+      {
+        "component": {
+          "apiVersion": 1,
+          "css": "frontend/admin/dist/catalog.css",
+          "entry": "frontend/admin/dist/catalog.mjs",
+          "id": "catalog"
+        },
+        "description": "浏览商城目录，把选中的扩展交给宿主安装。",
+        "group": "应用商城",
+        "hostActions": [
+          "extension.install"
+        ],
+        "icon": "i-lucide-store",
+        "label": "应用商城",
+        "menu": true,
+        "order": 30,
+        "path": "/catalog",
+        "view": "component"
+      }
+    ]
+  },
+  "author": {
+    "name": "SForum",
+    "url": "https://github.com/zhuchunshu/sforum"
+  },
+  "backend": {
+    "digest": "8f219c145ceb471a7a294da0f1c023333d634565b30cf6a6b53adf8eda64362d",
+    "entry": "backend/plugin",
+    "hostApiVersion": "sforum.host@2",
+    "protocolVersion": 2,
+    "rpc": "hashicorp-go-plugin"
+  },
+  "capabilities": [
+    "host.api",
+    "settings.own",
+    "net.outbound"
+  ],
+  "description": "在论坛后台浏览 SForum 应用商城，并把选中的插件或主题交给宿主安装（只暂存）。",
+  "id": "sforum.store",
+  "includes": {
+    "langs": "manifest/langs",
+    "settings": "manifest/settings.json"
+  },
+  "manifestVersion": 3,
+  "name": "应用商城",
+  "openapi": [
+    {
+      "contractVersion": "sforum.store.openapi.routes@1",
+      "digest": "81ee8950d958b3ec443ff13325d6b973bba899a350a59e762548080e87a15938",
+      "id": "sforum.store.file.openapi-routes",
+      "namespace": "sforum.store.api",
+      "path": "openapi/routes.yaml"
+    }
+  ],
+  "packageFiles": [
+    {
+      "digest": "8f219c145ceb471a7a294da0f1c023333d634565b30cf6a6b53adf8eda64362d",
+      "id": "sforum.store.file.backend",
+      "kind": "executable",
+      "path": "backend/plugin"
+    },
+    {
+      "digest": "b2d3ea9ee8fcb33b5994ada62f6497a3086c90aa2abb94459e14a0d60f6ff1c5",
+      "id": "sforum.store.file.admin",
+      "kind": "frontend",
+      "path": "frontend/admin/dist/catalog.mjs"
+    },
+    {
+      "digest": "4c64a6ba05298dca8b167c3c6d28cb2de77409ecbfdbf9a4e2236b27037419d5",
+      "id": "sforum.store.asset.admin-style",
+      "kind": "asset",
+      "path": "frontend/admin/dist/catalog.css"
+    },
+    {
+      "digest": "fde035c09e5af095f60e066e5dfde34ac2b890eaa73f8855fc7546aa5dd9d7f7",
+      "id": "sforum.store.catalog.response",
+      "kind": "schema",
+      "path": "schemas/catalog.response.json",
+      "version": "1"
+    },
+    {
+      "digest": "b185d7f8fa89cd02cba7dd4be19eda71191bd532672b43a9c9d054eb38e03f95",
+      "id": "sforum.store.product.response",
+      "kind": "schema",
+      "path": "schemas/product.response.json",
+      "version": "1"
+    },
+    {
+      "digest": "2088136f70c9fa01d7ea35c57886cb299fd3118bb621091c34bc582126692f4b",
+      "id": "sforum.store.install-url.response",
+      "kind": "schema",
+      "path": "schemas/install-url.response.json",
+      "version": "1"
+    },
+    {
+      "digest": "3ce0919718577f91371c0c02587662aa8393cbc80fa5fafc9c6ee96d892039b5",
+      "id": "sforum.store.error",
+      "kind": "schema",
+      "path": "schemas/error.json",
+      "version": "1"
+    },
+    {
+      "digest": "81ee8950d958b3ec443ff13325d6b973bba899a350a59e762548080e87a15938",
+      "id": "sforum.store.file.openapi-routes",
+      "kind": "openapi",
+      "path": "openapi/routes.yaml"
+    },
+    {
+      "digest": "7c4978fa212cc758b6e6f5d6d3ca6d09d346341ee85dc0608e32207faf47c9a4",
+      "id": "sforum.store.install-url.request",
+      "kind": "schema",
+      "path": "schemas/install-url.request.json",
+      "version": "1"
+    }
+  ],
+  "routes": [
+    {
+      "access": "login",
+      "action": "add",
+      "contractVersion": "sforum.store.route.catalog@1",
+      "fallback": "closed",
+      "guard": "core.guard.login",
+      "handler": "sforum.store.route.catalog",
+      "id": "sforum.store.route.catalog",
+      "methods": [
+        "GET"
+      ],
+      "mode": "http",
+      "path": "/api/store/catalog",
+      "responseSchema": "sforum.store.catalog.response@1",
+      "timeoutMs": 15000
+    },
+    {
+      "access": "login",
+      "action": "add",
+      "contractVersion": "sforum.store.route.product@1",
+      "fallback": "closed",
+      "guard": "core.guard.login",
+      "handler": "sforum.store.route.product",
+      "id": "sforum.store.route.product",
+      "methods": [
+        "GET"
+      ],
+      "mode": "http",
+      "path": "/api/store/product",
+      "responseSchema": "sforum.store.product.response@1",
+      "timeoutMs": 15000
+    },
+    {
+      "access": "login",
+      "action": "add",
+      "contractVersion": "sforum.store.route.install-url@1",
+      "fallback": "closed",
+      "guard": "core.guard.login",
+      "handler": "sforum.store.route.install-url",
+      "id": "sforum.store.route.install-url",
+      "methods": [
+        "POST"
+      ],
+      "mode": "http",
+      "path": "/api/store/install-url",
+      "requestSchema": "sforum.store.install-url.request@1",
+      "responseSchema": "sforum.store.install-url.response@1",
+      "timeoutMs": 15000
+    }
+  ],
+  "sforumVersion": ">=1.0.0",
+  "type": "plugin",
+  "url": "https://github.com/zhuchunshu/sforum-app-store",
+  "version": "0.1.0"
+}

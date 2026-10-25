@@ -1,0 +1,13 @@
+{
+  "manifestVersion": 3,
+  "id": "abbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "name": "Too Long",
+  "description": "An 82-character id is rejected by the host schema.",
+  "url": "https://github.com/example/too-long",
+  "author": {
+    "name": "SForum"
+  },
+  "version": "1.0.0",
+  "type": "plugin",
+  "sforumVersion": "*"
+}

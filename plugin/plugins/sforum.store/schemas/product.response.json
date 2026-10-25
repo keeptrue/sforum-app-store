@@ -1,0 +1,228 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "sforum.store.product.response@1",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "product"
+      ],
+      "properties": {
+        "product": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "slug",
+            "extensionId",
+            "name",
+            "kind",
+            "summary",
+            "readme",
+            "releases"
+          ],
+          "properties": {
+            "slug": {
+              "type": "string"
+            },
+            "extensionId": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "kind": {
+              "enum": [
+                "plugin",
+                "theme"
+              ]
+            },
+            "summary": {
+              "type": "string"
+            },
+            "readme": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "html",
+                    "sourceUrl",
+                    "fetchedAt"
+                  ],
+                  "properties": {
+                    "html": {
+                      "type": "string"
+                    },
+                    "sourceUrl": {
+                      "type": "string"
+                    },
+                    "sha": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "fetchedAt": {
+                      "type": "string"
+                    },
+                    "byteSize": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "category": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "iconUrl": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "repoUrl": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "latestVersion": {
+              "type": "string"
+            },
+            "platforms": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "os",
+                  "arch"
+                ],
+                "properties": {
+                  "os": {
+                    "type": "string"
+                  },
+                  "arch": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "releases": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "version",
+                  "channel",
+                  "publishedAt",
+                  "sforumVersion",
+                  "status",
+                  "assets"
+                ],
+                "properties": {
+                  "version": {
+                    "type": "string"
+                  },
+                  "channel": {
+                    "enum": [
+                      "stable",
+                      "beta"
+                    ]
+                  },
+                  "publishedAt": {
+                    "type": "string"
+                  },
+                  "sforumVersion": {
+                    "type": "string"
+                  },
+                  "status": {
+                    "type": "string"
+                  },
+                  "digest": {
+                    "type": "string"
+                  },
+                  "notes": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "capabilities": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "assets": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "os",
+                        "arch",
+                        "filename",
+                        "size",
+                        "sha256"
+                      ],
+                      "properties": {
+                        "os": {
+                          "type": "string"
+                        },
+                        "arch": {
+                          "type": "string"
+                        },
+                        "filename": {
+                          "type": "string"
+                        },
+                        "size": {
+                          "type": "integer"
+                        },
+                        "sha256": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "stale": {
+          "type": "boolean"
+        },
+        "fetchedAt": {
+          "type": "string"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "message"
+      ],
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        }
+      }
+    }
+  ]
+}

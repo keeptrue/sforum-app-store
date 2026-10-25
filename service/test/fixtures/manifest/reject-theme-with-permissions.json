@@ -1,0 +1,12 @@
+{
+  "manifestVersion": 3,
+  "id": "sforum.conformance.theme-permissions",
+  "name": "Theme With Permissions",
+  "description": "Themes may not declare permissions.",
+  "url": "https://github.com/example/theme-permissions",
+  "author": { "name": "SForum" },
+  "version": "1.0.0",
+  "type": "theme",
+  "sforumVersion": "*",
+  "permissions": ["content.read"]
+}

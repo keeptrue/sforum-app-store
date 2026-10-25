@@ -1,0 +1,4 @@
+{
+  "name": "App Store",
+  "description": "Browse the SForum App Store from the admin panel and hand a chosen plugin or theme to the Host installer. Packages are staged only; trust and enable stay in core."
+}

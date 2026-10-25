@@ -18,8 +18,14 @@ dist/
 
 # Go（插件后端构建产物）
 plugin/plugins/*/backend/bin/
+plugin/plugins/*/backend/plugin
 plugin/plugins/*/backend/sforum-*
 plugin/plugins/*/backend/*.test
+
+# 扩展包内的预构建产物必须入库：宿主按 exact-artifact 校验摘要
+!plugin/plugins/*/frontend/admin/dist/
+!plugin/plugins/*/frontend/admin/dist/*.mjs
+!plugin/plugins/*/frontend/admin/dist/*.css
 
 # 包体：仓库永不存 ZIP/TAR
 *.zip
@@ -39,3 +45,9 @@ test-results/
 .idea/
 .vscode/
 *.swp
+
+# 服务端运行时产物：内容寻址图片存储（S3）
+service/.data/
+
+# CI 只在流水线里把 SForum 检出到仓内（本地是同级目录）
+/SForum/

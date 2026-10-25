@@ -1,0 +1,8 @@
+{
+  "upstream": "github.com/zhuchunshu/sforum",
+  "source": "apps/api/app/Support/ExtensionManifest/schemas/manifest-v3.schema.json",
+  "commit": "10c2b21e863edc933a88f89be809cfbe9777f0ed",
+  "sha256": "d69501132bd6aeac2e063a4331a59da6faf7ce62135aa0af7ad9eca0314c9b8e",
+  "bytes": 88407,
+  "syncedAt": "2026-10-25T06:24:03+08:00"
+}

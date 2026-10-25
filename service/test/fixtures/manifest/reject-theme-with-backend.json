@@ -1,0 +1,18 @@
+{
+  "manifestVersion": 3,
+  "id": "sforum.conformance.theme-backend",
+  "name": "Theme With Backend",
+  "description": "Themes may not declare a backend.",
+  "url": "https://github.com/example/theme-backend",
+  "author": { "name": "SForum" },
+  "version": "1.0.0",
+  "type": "theme",
+  "sforumVersion": "*",
+  "backend": {
+    "entry": "backend/plugin",
+    "rpc": "hashicorp-go-plugin",
+    "protocolVersion": 2,
+    "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "hostApiVersion": "sforum.host@2"
+  }
+}

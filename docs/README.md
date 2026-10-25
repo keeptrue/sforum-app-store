@@ -1,17 +1,22 @@
 # docs
 
-面向部署者与开发者的文档。S0 之后开始写，语言：`zh-CN` 默认，`en-US` 后续。
+面向部署者与开发者的文档。语言：`zh-CN` 默认，`en-US` 后续。
+
+## 已有
+
+| 文件 | 读者 | 内容 |
+| --- | --- | --- |
+| `deployment.md` | 部署者 | 部署矩阵、必需环境变量、反向代理与隧道、改对外地址（后台「系统设置」，保存即生效）、初始化顺序、GitHub App 注册、升级与回滚 |
+| `github-app.md` | 部署者 | GitHub App 在后台的配置、验证、webhook secret 与私钥轮换、未配置时的表现、排查 |
+| `oauth-setup.md` | 论坛管理员 | 在 SForum 建 OAuth2 应用（回调地址、scope、密钥轮换、失败码） |
+| `plugin.md` | 论坛管理员 | 商城插件 `sforum.store` 的安装、设置、安装交接语义与排查 |
+| `developer.md` | 扩展开发者 | 登录、提交、审核、发布的产品流程 |
 
 ## 待写清单
 
-1. `deploy.md` —— 官方实例与自部署的差异；必填环境变量；缺失即失败的清单；升级与回滚。
-2. `github-app.md` —— 自部署者注册 GitHub App 的 10 分钟步骤（权限、事件、回调、webhook
-   secret、安装流程、常见失败提示）。
-3. `oauth-setup.md` —— 在 SForum 后台创建 OAuth2 应用、回调地址填写、scope 选择、轮换步骤与
-   「为什么标准 OAuth 库接不上」（CSRF 握手 + body 凭据）。
-4. `publishing.md` —— 开发者发布流程：仓库准备、清单要求、tag 约定、预发布、首个 release 人工
+1. `publishing.md` —— 开发者发布流程：仓库准备、清单要求、tag 约定、预发布、首个 release 人工
    审核、yank。
-5. `operations.md` —— 备份与迁移、worker 运维、限流参数、审计口径。
+2. `operations.md` —— 备份与迁移、worker 运维、限流参数、审计口径。
 
 ## 写作要求
 

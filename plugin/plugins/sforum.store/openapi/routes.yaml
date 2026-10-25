@@ -1,0 +1,88 @@
+openapi: 3.1.0
+info:
+  title: SForum Store Plugin API
+  version: 0.1.0
+  description: |
+    管理页与插件后端之间的唯一 HTTP 面。管理页只调用这三条路由；安装由宿主
+    bridge.installExtension 执行，插件后端只负责代理商城与签发下载链接。
+    每个响应 schema 都是「成功 | 错误」的联合：宿主对任何状态码都会按声明的
+    responseSchema 校验响应体，错误文档也必须合法。
+paths:
+  /api/store/catalog:
+    get:
+      operationId: sforum.store.api.catalog
+      summary: 商城目录（代理）
+      x-sforum-route-id: sforum.store.route.catalog
+      x-sforum-contract-version: sforum.store.route.catalog@1
+      x-sforum-guard: core.guard.login
+      x-sforum-response-schema: sforum.store.catalog.response@1
+      parameters:
+        - { name: channel, in: query, schema: { type: string, enum: [stable, beta] } }
+        - { name: q, in: query, schema: { type: string, maxLength: 120 } }
+        - { name: category, in: query, schema: { type: string } }
+        - { name: cursor, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer } }
+      responses:
+        "200":
+          description: 目录页
+          content:
+            application/json:
+              schema:
+                $ref: '../schemas/catalog.response.json'
+        default:
+          description: 错误文档（not_configured / upstream_error / invalid_request）
+          content:
+            application/json:
+              schema:
+                $ref: '../schemas/catalog.response.json'
+  /api/store/product:
+    get:
+      operationId: sforum.store.api.product
+      summary: 产品详情（代理）
+      x-sforum-route-id: sforum.store.route.product
+      x-sforum-contract-version: sforum.store.route.product@1
+      x-sforum-guard: core.guard.login
+      x-sforum-response-schema: sforum.store.product.response@1
+      parameters:
+        - { name: slug, in: query, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: 详情
+          content:
+            application/json:
+              schema:
+                $ref: '../schemas/product.response.json'
+        default:
+          description: 错误文档（invalid_request / product_not_found / upstream_error）
+          content:
+            application/json:
+              schema:
+                $ref: '../schemas/product.response.json'
+  /api/store/install-url:
+    post:
+      operationId: sforum.store.api.installUrl
+      summary: 为选中资产签发商城下载链接
+      x-sforum-route-id: sforum.store.route.install-url
+      x-sforum-contract-version: sforum.store.route.install-url@1
+      x-sforum-guard: core.guard.login
+      x-sforum-request-schema: sforum.store.install-url.request@1
+      x-sforum-response-schema: sforum.store.install-url.response@1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '../schemas/install-url.request.json'
+      responses:
+        "200":
+          description: 签名链接
+          content:
+            application/json:
+              schema:
+                $ref: '../schemas/install-url.response.json'
+        default:
+          description: 错误文档（invalid_request / asset_not_found / upstream_error）
+          content:
+            application/json:
+              schema:
+                $ref: '../schemas/install-url.response.json'

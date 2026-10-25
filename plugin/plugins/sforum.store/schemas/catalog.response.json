@@ -1,0 +1,189 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "sforum.store.catalog.response@1",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "items",
+        "total",
+        "compatibility"
+      ],
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "slug",
+              "extensionId",
+              "name",
+              "kind",
+              "summary",
+              "latestVersion",
+              "sforumVersion",
+              "platforms",
+              "compatibility"
+            ],
+            "properties": {
+              "slug": {
+                "type": "string"
+              },
+              "extensionId": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "plugin",
+                  "theme"
+                ]
+              },
+              "summary": {
+                "type": "string"
+              },
+              "category": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "iconUrl": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "latestVersion": {
+                "type": "string"
+              },
+              "sforumVersion": {
+                "type": "string"
+              },
+              "updatedAt": {
+                "type": "string"
+              },
+              "platforms": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "os",
+                    "arch"
+                  ],
+                  "properties": {
+                    "os": {
+                      "type": "string"
+                    },
+                    "arch": {
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              "compatibility": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "status",
+                  "estimated"
+                ],
+                "properties": {
+                  "status": {
+                    "enum": [
+                      "compatible",
+                      "incompatible",
+                      "unknown"
+                    ]
+                  },
+                  "estimated": {
+                    "type": "boolean"
+                  },
+                  "constraint": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "total": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "nextCursor": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "compatibility": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "status",
+            "estimated"
+          ],
+          "properties": {
+            "status": {
+              "enum": [
+                "compatible",
+                "incompatible",
+                "unknown"
+              ]
+            },
+            "estimated": {
+              "type": "boolean"
+            },
+            "constraint": {
+              "type": "string"
+            }
+          }
+        },
+        "stale": {
+          "type": "boolean"
+        },
+        "fetchedAt": {
+          "type": "string"
+        },
+        "target": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "os",
+            "arch"
+          ],
+          "properties": {
+            "os": {
+              "type": "string"
+            },
+            "arch": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "message"
+      ],
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "manifestVersion": 3,
+  "id": "sforum.conformance.loose-version",
+  "name": "Loose Version",
+  "description": "A two-part version is not strict semver.",
+  "url": "https://github.com/example/loose-version",
+  "author": { "name": "SForum" },
+  "version": "1.2",
+  "type": "plugin",
+  "sforumVersion": "*"
+}

@@ -1,0 +1,11 @@
+{
+  "manifestVersion": 3,
+  "id": "sforum.conformance.build-metadata",
+  "name": "Build Metadata",
+  "description": "Strict semver allows build metadata; the host accepts it.",
+  "url": "https://github.com/example/build-metadata",
+  "author": { "name": "SForum" },
+  "version": "1.2.3+build.5",
+  "type": "plugin",
+  "sforumVersion": ">=1.0.0"
+}

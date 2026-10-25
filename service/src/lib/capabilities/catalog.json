@@ -1,0 +1,95 @@
+{
+  "entries": [
+    {
+      "key": "ai.invoke",
+      "risk": "medium",
+      "labelZh": "调用宿主 AI 网关",
+      "labelEn": "Invoke Host AI gateway",
+      "description": "Send AI completion requests through the Host gateway so cost accounting, rate limits, and audit stay host-owned. Subject and cost gates still apply per request."
+    },
+    {
+      "key": "audit.append",
+      "risk": "medium",
+      "labelZh": "追加审计记录",
+      "labelEn": "Append audit events",
+      "description": "Append structured audit events under this extension's namespace."
+    },
+    {
+      "key": "events.emit",
+      "risk": "low",
+      "labelZh": "发布自身命名空间事件",
+      "labelEn": "Emit own-namespace events",
+      "description": "Publish events strictly under this extension's namespace through the Host event channel; core event names and other plugins' namespaces stay closed."
+    },
+    {
+      "key": "extensions.call",
+      "risk": "medium",
+      "labelZh": "调用扩展服务",
+      "labelEn": "Call extension services",
+      "description": "Invoke declared plugin services or providers through Host Service Discovery with live exact-artifact admission."
+    },
+    {
+      "key": "extensions.manage",
+      "risk": "high",
+      "labelZh": "管理受信任扩展",
+      "labelEn": "Manage trusted extensions",
+      "description": "Perform allowlisted settings update/reset/action and disable of already-trusted non-system non-self plugins via Host Commands. Never replaces super_admin trust confirmation."
+    },
+    {
+      "key": "extensions.read",
+      "risk": "medium",
+      "labelZh": "读取扩展清单",
+      "labelEn": "Read extension inventory",
+      "description": "Read a redacted extension inventory and public runtime/contract state. Never exposes secrets, trust tokens, package paths, or credentials."
+    },
+    {
+      "key": "host.api",
+      "risk": "low",
+      "labelZh": "调用宿主 API",
+      "labelEn": "Call Host API",
+      "description": "Use the versioned host surface (sforum.host/v1) for permission checks, settings, jobs, and audit."
+    },
+    {
+      "key": "jobs.enqueue",
+      "risk": "medium",
+      "labelZh": "入队后台任务",
+      "labelEn": "Enqueue background jobs",
+      "description": "Enqueue River jobs for job kinds declared in the plugin manifest only."
+    },
+    {
+      "key": "net.outbound",
+      "risk": "high",
+      "labelZh": "出站网络",
+      "labelEn": "Outbound network",
+      "description": "Open outbound network connections (HTTP, SMTP, etc.) from the plugin process or via Host helpers."
+    },
+    {
+      "key": "permissions.check",
+      "risk": "low",
+      "labelZh": "校验用户权限",
+      "labelEn": "Check user permissions",
+      "description": "Ask the host whether an actor holds a permission key; cannot grant permissions."
+    },
+    {
+      "key": "settings.own",
+      "risk": "low",
+      "labelZh": "读写自身设置",
+      "labelEn": "Own extension settings",
+      "description": "Read and write settings belonging only to this extension."
+    },
+    {
+      "key": "users.email.read",
+      "risk": "high",
+      "labelZh": "读取本人邮箱地址",
+      "labelEn": "Read own email address",
+      "description": "Read the signed-in actor's own primary email address through the capability- and delegation-gated consent query. Never grants access to other users, never enters stable views, and every read is audited."
+    },
+    {
+      "key": "users.read",
+      "risk": "high",
+      "labelZh": "读取用户信息",
+      "labelEn": "Read user profiles",
+      "description": "Read safe, non-secret user fields through the Host API."
+    }
+  ]
+}

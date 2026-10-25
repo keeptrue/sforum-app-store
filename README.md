@@ -2,8 +2,26 @@
 
 SForum 应用商城：一个独立服务端 + 一个 SForum 插件，同仓两产物。
 
-Status: **设计阶段（draft）**。没有可运行代码，没有安装步骤。当前任务书见
-`knowledge/plans/2026-10-24-app-store-service.md`，它停在 `draft`，直到人工明确「批准」。
+Status: **实现阶段（S0–S6 完成）**。`service/` 已有 DB 驱动的目录与详情、公开 `/api/v1`、
+签名下载代理、产品 CRUD 与内容寻址图片、OAuth2 登录与会话、Postgres 迁移、GitHub App 客户端、
+webhook 验签/幂等、pg-boss worker 与 release 同步/检测。审核台与插件均已落地。
+任务书 `knowledge/plans/2026-10-24-app-store-service.md` 状态为 `active`。
+
+## 快速开始（S0/S1）
+
+```bash
+bun install
+bun run dev          # http://127.0.0.1:4000
+bun run build        # Bun 运行时闸门
+bun run test         # unit + Postgres 集成
+bun run contract:generate
+bun run db:migrate   # 需要 service/.env.local
+bun run seed:dev     # 本地预览数据（幂等；生产不用）
+bun run worker       # GitHub webhook / release 同步
+curl http://127.0.0.1:4000/api/health
+```
+
+目录与产品详情读 Postgres；空库时目录显示空状态，不造假数据。
 
 ## 两个产物
 

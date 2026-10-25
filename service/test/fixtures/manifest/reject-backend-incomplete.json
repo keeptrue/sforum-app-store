@@ -1,0 +1,12 @@
+{
+  "manifestVersion": 3,
+  "id": "sforum.conformance.backend-incomplete",
+  "name": "Backend Incomplete",
+  "description": "A backend entry needs rpc, protocolVersion, digest and hostApiVersion.",
+  "url": "https://github.com/example/backend-incomplete",
+  "author": { "name": "SForum" },
+  "version": "1.0.0",
+  "type": "plugin",
+  "sforumVersion": "*",
+  "backend": { "entry": "backend/plugin" }
+}

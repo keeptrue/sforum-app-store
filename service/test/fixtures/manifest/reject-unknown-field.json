@@ -1,0 +1,12 @@
+{
+  "manifestVersion": 3,
+  "id": "sforum.conformance.unknown-field",
+  "name": "Unknown Field",
+  "description": "A typo must not silently drop the declaration.",
+  "url": "https://github.com/example/unknown-field",
+  "author": { "name": "SForum" },
+  "version": "1.0.0",
+  "type": "plugin",
+  "sforumVersion": "*",
+  "capabilties": ["host.api"]
+}

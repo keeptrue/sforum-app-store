@@ -1,0 +1,10 @@
+{
+  "manifestVersion": 3,
+  "id": "sforum.conformance.missing-description",
+  "name": "Missing Description",
+  "url": "https://github.com/example/missing-description",
+  "author": { "name": "SForum" },
+  "version": "1.0.0",
+  "type": "plugin",
+  "sforumVersion": "*"
+}

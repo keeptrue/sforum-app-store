@@ -1,0 +1,12 @@
+{
+  "manifestVersion": 3,
+  "id": "sforum.conformance.duplicate-capabilities",
+  "name": "Duplicate Capabilities",
+  "description": "The host schema rejects duplicate capability keys.",
+  "url": "https://github.com/example/duplicate-capabilities",
+  "author": { "name": "SForum" },
+  "version": "1.0.0",
+  "type": "plugin",
+  "sforumVersion": "*",
+  "capabilities": ["host.api", "host.api"]
+}

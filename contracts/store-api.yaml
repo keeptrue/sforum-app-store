@@ -1,0 +1,677 @@
+openapi: 3.1.0
+info:
+  title: SForum Store API
+  version: 0.1.0
+  description: |
+    商城服务端的唯一跨产物契约。公开目录只读；签名下载与插件安装交接都走这里。
+    所有时间使用 RFC 3339；所有摘要为 64 位小写十六进制 SHA-256。
+servers:
+  - url: /api
+    description: Same-origin service routes
+tags:
+  - name: ops
+  - name: catalog
+  - name: distribution
+paths:
+  /health:
+    get:
+      tags: [ops]
+      operationId: getHealth
+      summary: 运行状态
+      responses:
+        "200":
+          description: Service is up.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+  /v1/catalog:
+    get:
+      tags: [catalog]
+      operationId: listCatalog
+      summary: 目录
+      description: |
+        只返回已发布产品。`sforum` 是宿主 `coreVersion`（严格 semver），用于对每个
+        `release_version.sforum_version_constraint` 做 Masterminds 约束求值；缺失或非法时
+        `compatibility=unknown`，不过滤。`sforumBuild` 只用于识别 dev 构建，不参与求值。
+      parameters:
+        - name: channel
+          in: query
+          schema:
+            $ref: "#/components/schemas/Channel"
+        - name: sforum
+          in: query
+          description: 宿主 CoreCompatibilityVersion；严格 semver。
+          schema:
+            type: string
+        - name: sforumBuild
+          in: query
+          description: 宿主 version.Get().Version；可能是 dev / dev-abc12。
+          schema:
+            type: string
+        - name: os
+          in: query
+          schema:
+            type: string
+            examples: [linux]
+        - name: arch
+          in: query
+          schema:
+            type: string
+            examples: [amd64]
+        - name: compat
+          in: query
+          description: 已知宿主版本时的过滤强度；默认 compatible。
+          schema:
+            type: string
+            enum: [compatible, all]
+            default: compatible
+        - name: q
+          in: query
+          schema:
+            type: string
+            maxLength: 120
+        - name: category
+          in: query
+          schema:
+            type: string
+        - name: kind
+          in: query
+          description: 按扩展类型筛选；缺失表示不筛。
+          schema:
+            type: string
+            enum: [plugin, theme]
+        - name: cursor
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 18
+      responses:
+        "200":
+          description: Page of products.
+          headers:
+            ETag:
+              schema:
+                type: string
+            Cache-Control:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CatalogPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+  /v1/products/{slug}:
+    get:
+      tags: [catalog]
+      operationId: getProduct
+      summary: 产品详情
+      parameters:
+        - $ref: "#/components/parameters/Slug"
+        - name: sforum
+          in: query
+          schema:
+            type: string
+        - name: sforumBuild
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Product detail.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductDetail"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /v1/products/{slug}/releases:
+    get:
+      tags: [catalog]
+      operationId: listProductReleases
+      summary: 版本历史
+      parameters:
+        - $ref: "#/components/parameters/Slug"
+        - name: channel
+          in: query
+          schema:
+            $ref: "#/components/schemas/Channel"
+      responses:
+        "200":
+          description: Releases ordered by semver descending.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ReleaseVersion"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /v1/products/{slug}/releases/{version}:
+    get:
+      tags: [catalog]
+      operationId: getProductRelease
+      summary: 单个版本
+      parameters:
+        - $ref: "#/components/parameters/Slug"
+        - name: version
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: One release.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReleaseVersion"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /v1/download-urls:
+    post:
+      tags: [distribution]
+      operationId: createDownloadUrl
+      summary: 签发下载链接（插件用）
+      description: |
+        匿名单据与公开产品页同一权限面；已发布即可安装。签名 token 绑定 asset id、sha256 与
+        exp，TTL 30 分钟，可重复取用；不承诺单次。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DownloadUrlRequest"
+      responses:
+        "200":
+          description: Signed URL.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DownloadUrlResponse"
+        "404":
+          description: |
+            产品不可见、版本不存在或该平台没有资产。稳定错误码：
+            `product_not_found` / `release_not_found` / `no_stable_release` /
+            `asset_not_found`。yank 与断开不在这里拦——签发成功但下载时复核失败返回 410。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /v1/products/{slug}/download/{os}/{arch}:
+    get:
+      tags: [distribution]
+      operationId: redirectToDownload
+      summary: 浏览器下载入口（302）
+      parameters:
+        - $ref: "#/components/parameters/Slug"
+        - name: os
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: arch
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "302":
+          description: Redirect to a signed download URL.
+          headers:
+            Location:
+              schema:
+                type: string
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /v1/download/{token}:
+    get:
+      tags: [distribution]
+      operationId: downloadAsset
+      summary: 签名下载
+      description: |
+        复核资产存在、未 yank、摘要一致、版本/产品 published、上游非 disconnected；不要求
+        「当前最新版本」。失败返回 410 与稳定错误码。
+
+        两种形态，同一条 URL：
+        - `200`：商城自己转发字节（`STORE_DOWNLOAD_MODE=proxy`，也是默认值，以及所有私有仓库）。
+        - `302`：`STORE_DOWNLOAD_MODE=redirect` 且仓库公开时，把 GitHub 已签好的对象地址交给
+          客户端，商城不再承担带宽。复核仍在签发这一跳生效；已发出的 302 目标无法事后撤销。
+          调用方必须能跟随跨域 302（宿主 `install-from-url` 的该行为未验证）。
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ZIP stream (proxy mode, or a private repository in redirect mode).
+          headers:
+            Content-Type:
+              schema:
+                type: string
+                const: application/zip
+            Content-Length:
+              schema:
+                type: integer
+            Content-Disposition:
+              schema:
+                type: string
+            Cache-Control:
+              schema:
+                type: string
+                const: private, no-store
+          content:
+            application/zip:
+              schema:
+                type: string
+                format: binary
+        "302":
+          description: Redirect to the signed object URL (public repository, redirect mode).
+          headers:
+            Location:
+              schema:
+                type: string
+            Cache-Control:
+              schema:
+                type: string
+                const: private, no-store
+            Referrer-Policy:
+              schema:
+                type: string
+                const: no-referrer
+        "410":
+          description: Token expired, release yanked, or upstream disconnected.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+components:
+  parameters:
+    Slug:
+      name: slug
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: "^[a-z0-9][a-z0-9-]{1,63}$"
+  responses:
+    BadRequest:
+      description: Invalid query or body.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotFound:
+      description: Resource not found. Authorization failures are also 404.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+  schemas:
+    Health:
+      type: object
+      required: [status, version, commit, time]
+      properties:
+        status:
+          type: string
+          const: ok
+        version:
+          type: string
+        commit:
+          type: string
+        time:
+          type: string
+          format: date-time
+        publicUrl:
+          type: string
+          description: |
+            The base URL this process is actually using. Every redirect, OAuth callback,
+            download short link and same-origin check is derived from it, so a deployment
+            behind a proxy or tunnel can compare it with the address bar and see a mismatch
+            immediately. `publicUrlSource` says which layer answered: the row saved under
+            系统设置 (`database`) or the `STORE_PUBLIC_URL` seed (`env`).
+        publicUrlSource:
+          type: string
+          enum: [database, env]
+        settingsUpdatedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: When the runtime settings row was last written; null when none exists.
+        configWarning:
+          type: string
+          description: |
+            Non-fatal: a stored setting was ignored and fell back to its seed, or the settings
+            row could not be read because the database is unreachable.
+        sessionCookie:
+          type: string
+          description: Name of the forum-session cookie, `__Host-store_session` when secure.
+        cookieSecure:
+          type: boolean
+          description: Whether cookies are issued with `Secure` and the `__Host-` prefix.
+        nodeEnv:
+          type: string
+        configError:
+          type: string
+          description: |
+            Present when the process is listening but its configuration is unreadable. Health
+            stays a liveness probe: the process answering at all is still useful evidence.
+    Channel:
+      type: string
+      enum: [stable, beta]
+    CompatibilityStatus:
+      type: string
+      enum: [compatible, incompatible, unknown]
+    Compatibility:
+      type: object
+      required: [status, estimated]
+      properties:
+        status:
+          $ref: "#/components/schemas/CompatibilityStatus"
+        estimated:
+          type: boolean
+          description: dev 构建按 1.0.0 估算时为 true；UI 只能写「按开发版估算」。
+        constraint:
+          type: string
+          description: 命中的 sforumVersion 约束（unknown 时省略）。
+    Platform:
+      type: object
+      required: [os, arch]
+      properties:
+        os:
+          type: string
+        arch:
+          type: string
+    ProductSummary:
+      type: object
+      required:
+        - slug
+        - extensionId
+        - name
+        - kind
+        - summary
+        - latestVersion
+        - sforumVersion
+        - updatedAt
+        - platforms
+        - compatibility
+      properties:
+        slug:
+          type: string
+        extensionId:
+          type: string
+        name:
+          type: string
+        kind:
+          type: string
+          enum: [plugin, theme]
+        summary:
+          type: string
+        category:
+          type: [string, "null"]
+          description: 商城自己的目录分类键（见 service/src/lib/products/taxonomy.ts）。
+        tags:
+          type: array
+          items:
+            type: string
+        iconUrl:
+          type: [string, "null"]
+          description: |
+            内容寻址的产品图标地址。图标优先取自绑定仓库的 `brand/icon.png`（方形 PNG，
+            ≤1 MiB —— 宿主品牌契约里的同一个文件），缺失或不可用时回退到 GitHub 社交预览，
+            两者都没有才是 null（客户端画字母占位）。开发者不能上传，仓库是唯一来源。
+        socialImageUrl:
+          type: [string, "null"]
+          description: |
+            内容寻址的品牌分享卡地址（包内 `brand/social-preview.png`，1280×640）。目录卡片把
+            它当作封面背景，产品页用它做链接预览；没有分享卡时为 null，卡片退回分类色板。
+            与图标同源：仓库是唯一来源，开发者不能上传。
+        latestVersion:
+          type: string
+        sforumVersion:
+          type: string
+          description: |
+            最新可安装版本在清单里声明的 sforumVersion：Masterminds 约束，原样透出，
+            不是版本号，也不代表商城对它做过判定。清单值不可解析时为空串。
+            目录卡片展示它，是因为这是产品事实；兼容性判决仍由 core 在安装时做。
+        updatedAt:
+          type: string
+          format: date-time
+        platforms:
+          type: array
+          items:
+            $ref: "#/components/schemas/Platform"
+        compatibility:
+          $ref: "#/components/schemas/Compatibility"
+        owner:
+          type: [string, "null"]
+          description: 展示用名称；不做账号标识。
+    ProductDetail:
+      allOf:
+        - $ref: "#/components/schemas/ProductSummary"
+        - type: object
+          required: [readme, releases]
+          properties:
+            readme:
+              oneOf:
+                - $ref: "#/components/schemas/ProductReadme"
+                - type: "null"
+              description: |
+                绑定仓库的 README 渲染结果。产品介绍只有这一个来源：摘要之外的文案由
+                开发者手写，正文由仓库提供。尚未成功读取时为 null。
+            repoUrl:
+              type: [string, "null"]
+              format: uri
+              description: 仓库网页地址；产品尚未绑定仓库时为 null。永不返回 API/资产地址。
+            releases:
+              type: array
+              items:
+                $ref: "#/components/schemas/ReleaseVersion"
+            permissions:
+              type: array
+              items:
+                $ref: "#/components/schemas/Permission"
+              description: 权限目录在 S4/S5 定稿；S3 省略该字段，改用 releases[].capabilities。
+    ProductReadme:
+      type: object
+      required: [html, sourceUrl, fetchedAt]
+      properties:
+        html:
+          type: string
+          description: |
+            服务端渲染并消毒后的 HTML（白名单标签与属性、外链 nofollow、图片 https-only）。
+            这是唯一对外表示：不发布 markdown 源，也不接受客户端渲染。
+        sourceUrl:
+          type: string
+          format: uri
+          description: README 在 GitHub 上的页面地址（`/blob/<ref>/<path>`）。永不含 API 或资产地址。
+        sha:
+          type: [string, "null"]
+          description: GitHub blob 摘要；README 内容变化时随之变化，用于审计。
+        fetchedAt:
+          type: string
+          format: date-time
+          description: 本次内容从 GitHub 取回的时间。
+        byteSize:
+          type: integer
+          minimum: 0
+          description: README 源文件字节数。
+    ReleaseVersion:
+      type: object
+      required:
+        - version
+        - channel
+        - publishedAt
+        - sforumVersion
+        - status
+        - assets
+      properties:
+        version:
+          type: string
+        channel:
+          $ref: "#/components/schemas/Channel"
+        publishedAt:
+          type: string
+          format: date-time
+        sforumVersion:
+          type: string
+          description: Masterminds 约束，不是版本号。
+        digest:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+          description: |
+            单平台版本的摘要；多平台版本省略，以 assets[].sha256 为准（一个版本可挂多个平台包）。
+        status:
+          type: string
+          enum: [published, yanked, needs_attention]
+        notesUrl:
+          type: string
+          description: 当前没有独立 changelog 页面，保留字段位；内容见 notes。
+        notes:
+          type: [string, "null"]
+          description: 已消毒的纯文本 changelog（可能是 Markdown 源文本被转义，不含 HTML）。
+        capabilities:
+          type: array
+          items:
+            type: string
+          description: 清单声明的能力键（manifest capabilities），原样透出，不带风险等级判定。
+        manifest:
+          type: object
+          description: |
+            清单里宿主会展示的元数据（description / url / author / langs），原样透出。
+            产品名仍取自清单 name，产品介绍仍只来自 README；这里不是第二份产品文案。
+            旧版本行没有该字段。
+          properties:
+            description:
+              type: string
+            url:
+              type: string
+              format: uri
+            author:
+              type: object
+              properties:
+                name:
+                  type: string
+                url:
+                  type: string
+                  format: uri
+            langs:
+              type: object
+              additionalProperties:
+                $ref: "#/components/schemas/ManifestLocale"
+        assets:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReleaseAsset"
+    ReleaseAsset:
+      type: object
+      required: [os, arch, filename, size, sha256]
+      properties:
+        os:
+          type: string
+        arch:
+          type: string
+        filename:
+          type: string
+        size:
+          type: integer
+          minimum: 0
+        sha256:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+    ManifestLocale:
+      type: object
+      description: 清单 langs 里的一段本地化覆盖；字段均为可选，未声明即回退顶层默认值。
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        url:
+          type: string
+          format: uri
+        author:
+          type: object
+          properties:
+            name:
+              type: string
+            url:
+              type: string
+              format: uri
+    Permission:
+      type: object
+      required: [key, risk]
+      properties:
+        key:
+          type: string
+        risk:
+          type: string
+          enum: [low, medium, high]
+        description:
+          type: string
+    CatalogPage:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProductSummary"
+        total:
+          type: integer
+          minimum: 0
+        nextCursor:
+          type: [string, "null"]
+        compatibility:
+          $ref: "#/components/schemas/Compatibility"
+    DownloadUrlRequest:
+      type: object
+      required: [product, os, arch]
+      properties:
+        product:
+          type: string
+          description: Product slug.
+        version:
+          type: string
+          description: 省略时取最新 stable。
+        os:
+          type: string
+        arch:
+          type: string
+    DownloadUrlResponse:
+      type: object
+      required: [url, sha256, size, expiresAt]
+      properties:
+        url:
+          type: string
+          format: uri
+        sha256:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+        size:
+          type: integer
+          minimum: 0
+        expiresAt:
+          type: string
+          format: date-time
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          examples: [version_conflict]
+        message:
+          type: string
+        details:
+          type: object
+          additionalProperties: true

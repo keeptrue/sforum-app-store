@@ -1,0 +1,13 @@
+{
+  "manifestVersion": 3,
+  "id": "abbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "name": "Long Id",
+  "description": "An 81-character id is the host maximum.",
+  "url": "https://github.com/example/long-id",
+  "author": {
+    "name": "SForum"
+  },
+  "version": "1.0.0",
+  "type": "plugin",
+  "sforumVersion": "*"
+}

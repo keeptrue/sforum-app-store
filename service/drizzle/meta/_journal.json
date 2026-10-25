@@ -1,0 +1,111 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1792800797501,
+      "tag": "0000_empty_rawhide_kid",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1792801291084,
+      "tag": "0001_strong_midnight",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1792838212163,
+      "tag": "0002_flawless_black_widow",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1792838334870,
+      "tag": "0003_bouncy_beast",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1792840437957,
+      "tag": "0004_military_hobgoblin",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1792845398746,
+      "tag": "0005_flashy_terrax",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1792859026451,
+      "tag": "0006_wooden_cable",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1792862067157,
+      "tag": "0007_small_mathemanic",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1792864311828,
+      "tag": "0008_careful_lily_hollister",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1792868618512,
+      "tag": "0009_github_app_config",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1792871152514,
+      "tag": "0010_store_settings",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1792877294442,
+      "tag": "0011_github_only_products",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1792880431758,
+      "tag": "0012_vengeful_sally_floyd",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1792887021412,
+      "tag": "0013_product_brand_assets",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1792932103554,
+      "tag": "0014_download_mode",
+      "breakpoints": true
+    }
+  ]
+}

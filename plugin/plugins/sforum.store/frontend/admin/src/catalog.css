@@ -1,0 +1,895 @@
+/* SForum 应用商城管理页样式。
+   主题沿用 Host 管理端契约变量（--bg-admin-card / --bg-admin-app / --border-admin /
+   --text-admin-main）与品牌变量（--sf-accent / --sf-accent-soft / --sf-accent-contrast /
+   --sf-accent-focus），全部带中性回退值。暗色由祖先 .dark 驱动，与参考实现一致：
+   结构颜色来自 Host 变量，只有中性文字与浅底色需要按 .dark 覆盖。
+   密度：14px 基准、8px 栅格；不使用渐变、外部字体与图片。 */
+
+.sfstore,
+.sfstore *,
+.sfstore *::before,
+.sfstore *::after {
+  box-sizing: border-box;
+}
+
+.sfstore {
+  --sfstore-surface: var(--bg-admin-card, #ffffff);
+  --sfstore-app: var(--bg-admin-app, #f8fafc);
+  --sfstore-border: var(--border-admin, #e2e8f0);
+  --sfstore-text: var(--text-admin-main, #0f172a);
+  --sfstore-muted: #64748b;
+  --sfstore-accent: var(--sf-accent, #0f766e);
+  --sfstore-accent-contrast: var(--sf-accent-contrast, #ffffff);
+  --sfstore-accent-soft: var(--sf-accent-soft, #e6f4f1);
+  --sfstore-focus: var(--sf-accent-focus, rgba(15, 118, 110, 0.18));
+  --sfstore-danger: #b91c1c;
+  --sfstore-danger-soft: #fef2f2;
+  --sfstore-warn: #92400e;
+  --sfstore-warn-soft: #fffbeb;
+  --sfstore-ok: #047857;
+  --sfstore-ok-soft: #ecfdf5;
+  --sfstore-row-hover: #f8fafc;
+
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+  max-width: 100%;
+  color: var(--sfstore-text);
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.dark .sfstore {
+  --sfstore-muted: #a1a1aa;
+  --sfstore-danger: #fca5a5;
+  --sfstore-danger-soft: rgba(185, 28, 28, 0.18);
+  --sfstore-warn: #fcd34d;
+  --sfstore-warn-soft: rgba(146, 64, 14, 0.22);
+  --sfstore-ok: #6ee7b7;
+  --sfstore-ok-soft: rgba(4, 120, 87, 0.2);
+  --sfstore-row-hover: rgba(255, 255, 255, 0.04);
+}
+
+/* ---------- 头部与筛选 ---------- */
+
+.sfstore__head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 46rem);
+  align-items: start;
+  gap: 16px;
+  min-width: 0;
+}
+
+.sfstore__intro {
+  min-width: 0;
+  max-width: 46rem;
+}
+
+.sfstore__title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.sfstore__lede {
+  margin: 4px 0 0;
+  color: var(--sfstore-muted);
+  font-size: 13px;
+}
+
+.sfstore__filters {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 168px 168px;
+  align-items: end;
+  gap: 8px;
+  min-width: 0;
+}
+
+@media (max-width: 1100px) {
+  .sfstore__head {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.sfstore__field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.sfstore__label {
+  color: var(--sfstore-muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.sfstore__input {
+  width: 100%;
+  min-width: 0;
+  min-height: 34px;
+  padding: 6px 8px;
+  border: 1px solid var(--sfstore-border);
+  border-radius: 6px;
+  background: var(--sfstore-surface);
+  color: var(--sfstore-text);
+  font: inherit;
+  font-size: 13px;
+}
+
+.sfstore__input:focus-visible {
+  outline: 2px solid var(--sfstore-accent);
+  outline-offset: 1px;
+}
+
+.sfstore__input--mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
+/* ---------- 计数与缓存提示 ---------- */
+
+.sfstore__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 16px;
+  min-width: 0;
+}
+
+.sfstore__count {
+  margin: 0;
+  color: var(--sfstore-muted);
+  font-size: 13px;
+}
+
+.sfstore__stale {
+  margin: 0;
+  color: var(--sfstore-warn);
+  font-size: 12px;
+}
+
+/* ---------- 主体两栏 ---------- */
+
+.sfstore__grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 26rem);
+  align-items: start;
+  gap: 16px;
+  min-width: 0;
+}
+
+@media (max-width: 1080px) {
+  .sfstore__grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.sfstore__panel {
+  min-width: 0;
+  border: 1px solid var(--sfstore-border);
+  border-radius: 8px;
+  background: var(--sfstore-surface);
+  overflow: hidden;
+}
+
+.sfstore__panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--sfstore-border);
+}
+
+.sfstore__panel-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--sfstore-muted);
+  letter-spacing: 0.04em;
+}
+
+/* ---------- 目录行 ---------- */
+
+.sfstore__list {
+  display: block;
+  min-width: 0;
+}
+
+.sfstore__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 8px 12px;
+  width: 100%;
+  padding: 12px 16px;
+  border: 0;
+  border-bottom: 1px solid var(--sfstore-border);
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+
+.sfstore__row:last-child {
+  border-bottom: 0;
+}
+
+.sfstore__row:hover {
+  background: var(--sfstore-row-hover);
+}
+
+.sfstore__row:focus-visible {
+  outline: 2px solid var(--sfstore-accent);
+  outline-offset: -2px;
+}
+
+.sfstore__row--active {
+  background: var(--sfstore-accent-soft);
+  box-shadow: inset 3px 0 0 var(--sfstore-accent);
+}
+
+.sfstore__tile {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  background: var(--sfstore-accent-soft);
+  color: var(--sfstore-accent);
+  font-size: 14px;
+  font-weight: 600;
+  /* A product icon fills the tile; the letter stays the fallback underneath. */
+  overflow: hidden;
+}
+
+.sfstore__tile-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.sfstore__tile--lg {
+  width: 40px;
+  height: 40px;
+  font-size: 16px;
+}
+
+.sfstore__row-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+.sfstore__row-title {
+  font-size: 14px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.sfstore__row-id {
+  display: block;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.sfstore__row-summary {
+  color: var(--sfstore-muted);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.sfstore__row-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+/* ---------- 徽标 ---------- */
+
+.sfstore__badge {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  padding: 1px 6px;
+  border: 1px solid var(--sfstore-border);
+  border-radius: 999px;
+  background: var(--sfstore-app);
+  color: var(--sfstore-text);
+  font-size: 11px;
+  line-height: 1.6;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sfstore__badge--muted {
+  color: var(--sfstore-muted);
+}
+
+.sfstore__badge--ok {
+  border-color: currentColor;
+  background: var(--sfstore-ok-soft);
+  color: var(--sfstore-ok);
+}
+
+.sfstore__badge--bad {
+  border-color: currentColor;
+  background: var(--sfstore-danger-soft);
+  color: var(--sfstore-danger);
+}
+
+.sfstore__badge--warn {
+  border-color: currentColor;
+  background: var(--sfstore-warn-soft);
+  color: var(--sfstore-warn);
+}
+
+/* ---------- 状态块 ---------- */
+
+.sfstore__state {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+  padding: 24px 16px;
+  min-width: 0;
+}
+
+.sfstore__state-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.sfstore__state-text {
+  margin: 0;
+  max-width: 42rem;
+  color: var(--sfstore-muted);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+/* ---------- 分页 ---------- */
+
+.sfstore__pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 16px;
+  border-top: 1px solid var(--sfstore-border);
+}
+
+/* ---------- 按钮 ---------- */
+
+.sfstore__btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-height: 32px;
+  padding: 5px 12px;
+  border: 1px solid var(--sfstore-border);
+  border-radius: 6px;
+  background: var(--sfstore-surface);
+  color: var(--sfstore-text);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.sfstore__btn:hover:not(:disabled) {
+  background: var(--sfstore-row-hover);
+}
+
+.sfstore__btn:focus-visible {
+  outline: 2px solid var(--sfstore-accent);
+  outline-offset: 1px;
+}
+
+.sfstore__btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.sfstore__btn--primary {
+  border-color: var(--sfstore-accent);
+  background: var(--sfstore-accent);
+  color: var(--sfstore-accent-contrast);
+}
+
+.sfstore__btn--primary:hover:not(:disabled) {
+  background: var(--sfstore-accent);
+  filter: brightness(1.06);
+}
+
+/* ---------- 详情 ---------- */
+
+.sfstore__detail {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+  padding: 16px;
+  min-width: 0;
+}
+
+.sfstore__detail-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  min-width: 0;
+}
+
+.sfstore__detail-main {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.sfstore__detail-name {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.sfstore__detail-tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin: 0;
+  min-width: 0;
+}
+
+.sfstore__summary {
+  margin: 0;
+  color: var(--sfstore-muted);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.sfstore__hint {
+  margin: 0;
+  color: var(--sfstore-muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.sfstore__note {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--sfstore-accent);
+}
+
+.sfstore__error {
+  margin: 0;
+  color: var(--sfstore-danger);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.sfstore__notice {
+  margin: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--sfstore-border);
+  border-left: 3px solid var(--sfstore-warn);
+  border-radius: 4px;
+  background: var(--sfstore-warn-soft);
+  color: var(--sfstore-warn);
+  font-size: 12px;
+}
+
+/* ---------- 安装区 ---------- */
+
+.sfstore__install {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+  justify-items: start;
+  padding: 12px;
+  border: 1px solid var(--sfstore-border);
+  border-radius: 8px;
+  background: var(--sfstore-app);
+  min-width: 0;
+}
+
+.sfstore__install-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+}
+
+.sfstore__install > .sfstore__field,
+.sfstore__install-row > .sfstore__field {
+  width: 100%;
+}
+
+.sfstore__signed {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+}
+
+.sfstore__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.sfstore__staged {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+  justify-items: start;
+  width: 100%;
+  padding: 12px;
+  border: 1px solid var(--sfstore-border);
+  border-radius: 8px;
+  background: var(--sfstore-surface);
+  min-width: 0;
+}
+
+.sfstore__status-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--sfstore-ok);
+}
+
+.sfstore__kv {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 4px;
+  margin: 0;
+  width: 100%;
+  min-width: 0;
+}
+
+.sfstore__kv-row {
+  display: grid;
+  grid-template-columns: 5rem minmax(0, 1fr);
+  gap: 8px;
+  align-items: baseline;
+  min-width: 0;
+}
+
+.sfstore__kv-key {
+  margin: 0;
+  color: var(--sfstore-muted);
+  font-size: 12px;
+}
+
+.sfstore__kv-value {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.sfstore__kv-value--wrap .sfstore__mono {
+  white-space: normal;
+  word-break: break-all;
+}
+
+/* ---------- 正文块 ---------- */
+
+.sfstore__block {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+  min-width: 0;
+}
+
+.sfstore__block-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.sfstore__prose {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--sfstore-text);
+  font-size: 13px;
+}
+
+.sfstore__mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.sfstore__sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ---------- README（服务端渲染并消毒的 HTML） ---------- */
+
+.sfstore__link {
+  justify-self: start;
+  color: var(--sfstore-accent);
+  font-size: 12px;
+  text-decoration: none;
+}
+
+.sfstore__link:hover {
+  text-decoration: underline;
+}
+
+.sfstore__link:focus-visible {
+  outline: 2px solid var(--sfstore-accent);
+  outline-offset: 1px;
+  border-radius: 4px;
+}
+
+/* 容器类名由契约固定为 `sforum-store-readme`，不跟 sfstore__ BEM 前缀走。
+   这里只补最小排版（标题、行高、代码块横向滚动、表格与图片不撑破面板），
+   不覆盖内容自身的语义结构；颜色只取本文件的变量。 */
+.sforum-store-readme {
+  min-width: 0;
+  color: var(--sfstore-text);
+  font-size: 13px;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+
+.sforum-store-readme > :first-child {
+  margin-top: 0;
+}
+
+.sforum-store-readme > :last-child {
+  margin-bottom: 0;
+}
+
+.sforum-store-readme h1,
+.sforum-store-readme h2,
+.sforum-store-readme h3,
+.sforum-store-readme h4,
+.sforum-store-readme h5,
+.sforum-store-readme h6 {
+  margin: 16px 0 8px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.sforum-store-readme h1 {
+  font-size: 18px;
+}
+
+.sforum-store-readme h2 {
+  font-size: 16px;
+}
+
+.sforum-store-readme h3 {
+  font-size: 14px;
+}
+
+.sforum-store-readme h4,
+.sforum-store-readme h5,
+.sforum-store-readme h6 {
+  font-size: 13px;
+}
+
+.sforum-store-readme p {
+  margin: 8px 0;
+  line-height: 1.7;
+}
+
+.sforum-store-readme ul,
+.sforum-store-readme ol {
+  margin: 8px 0;
+  padding-left: 1.25rem;
+}
+
+.sforum-store-readme li {
+  margin: 2px 0;
+}
+
+.sforum-store-readme li > p {
+  margin: 2px 0;
+}
+
+.sforum-store-readme a {
+  color: var(--sfstore-accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.sforum-store-readme blockquote {
+  margin: 8px 0;
+  padding: 2px 0 2px 10px;
+  border-left: 3px solid var(--sfstore-border);
+  color: var(--sfstore-muted);
+}
+
+.sforum-store-readme hr {
+  margin: 12px 0;
+  border: 0;
+  border-top: 1px solid var(--sfstore-border);
+}
+
+.sforum-store-readme code {
+  padding: 1px 4px;
+  border: 1px solid var(--sfstore-border);
+  border-radius: 4px;
+  background: var(--sfstore-app);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
+.sforum-store-readme pre {
+  margin: 8px 0;
+  padding: 8px 12px;
+  border: 1px solid var(--sfstore-border);
+  border-radius: 6px;
+  background: var(--sfstore-app);
+  overflow-x: auto;
+}
+
+.sforum-store-readme pre code {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  white-space: pre;
+}
+
+.sforum-store-readme table {
+  display: block;
+  width: 100%;
+  margin: 8px 0;
+  overflow-x: auto;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.sforum-store-readme th,
+.sforum-store-readme td {
+  padding: 4px 8px;
+  border: 1px solid var(--sfstore-border);
+  text-align: left;
+}
+
+.sforum-store-readme th {
+  color: var(--sfstore-muted);
+  font-weight: 500;
+}
+
+.sforum-store-readme img {
+  max-width: 100%;
+  height: auto;
+}
+
+/* ---------- 版本表 ---------- */
+
+.sfstore__table-wrap {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.sfstore__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.sfstore__table th {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--sfstore-border);
+  color: var(--sfstore-muted);
+  font-size: 12px;
+  font-weight: 500;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.sfstore__table td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--sfstore-border);
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+.sfstore__table tr:last-child td {
+  border-bottom: 0;
+}
+
+@media (max-width: 720px) {
+  .sfstore__table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+  }
+
+  .sfstore__table,
+  .sfstore__table tbody,
+  .sfstore__table tr,
+  .sfstore__table td {
+    display: block;
+    width: 100%;
+  }
+
+  .sfstore__table tr {
+    padding: 8px 0;
+    border-bottom: 1px solid var(--sfstore-border);
+  }
+
+  .sfstore__table tr:last-child {
+    border-bottom: 0;
+  }
+
+  .sfstore__table td {
+    display: grid;
+    grid-template-columns: 7.5rem minmax(0, 1fr);
+    gap: 8px;
+    padding: 2px 0;
+    border-bottom: 0;
+  }
+
+  .sfstore__table td[data-label]::before {
+    content: attr(data-label);
+    color: var(--sfstore-muted);
+    font-size: 12px;
+  }
+}
+
+/* ---------- 窄屏 ---------- */
+
+@media (max-width: 560px) {
+  .sfstore {
+    gap: 12px;
+  }
+
+  .sfstore__filters {
+    grid-template-columns: minmax(0, 1fr);
+    width: 100%;
+  }
+
+  .sfstore__row {
+    padding: 12px;
+  }
+
+  .sfstore__row-meta {
+    flex: 1 1 100%;
+  }
+
+  .sfstore__detail {
+    padding: 12px;
+  }
+
+  .sfstore__kv-row {
+    grid-template-columns: 4.5rem minmax(0, 1fr);
+  }
+}

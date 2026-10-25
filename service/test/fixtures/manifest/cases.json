@@ -1,0 +1,64 @@
+{
+  "cases": [
+    { "file": "accept-plugin.json", "verdict": "accept" },
+    { "file": "accept-theme.json", "verdict": "accept" },
+    { "file": "accept-id-81.json", "verdict": "accept" },
+    { "file": "accept-build-metadata.json", "verdict": "accept" },
+    { "file": "accept-neq-constraint.json", "verdict": "accept" },
+    {
+      "file": "reject-id-82.json",
+      "verdict": "reject",
+      "code": "manifest_id_invalid"
+    },
+    {
+      "file": "reject-uppercase-id.json",
+      "verdict": "reject",
+      "code": "manifest_id_invalid"
+    },
+    {
+      "file": "reject-loose-version.json",
+      "verdict": "reject",
+      "code": "manifest_version_invalid"
+    },
+    {
+      "file": "reject-missing-description.json",
+      "verdict": "reject",
+      "code": "manifest_description_missing"
+    },
+    {
+      "file": "reject-bad-url.json",
+      "verdict": "reject",
+      "code": "manifest_url_invalid"
+    },
+    {
+      "file": "reject-backend-incomplete.json",
+      "verdict": "reject",
+      "code": "manifest_backend_incomplete"
+    },
+    {
+      "file": "reject-theme-with-backend.json",
+      "verdict": "reject",
+      "code": "theme_backend_not_allowed"
+    },
+    {
+      "file": "reject-theme-with-permissions.json",
+      "verdict": "reject",
+      "code": "manifest_theme_declaration_invalid"
+    },
+    {
+      "file": "reject-unknown-field.json",
+      "verdict": "reject",
+      "code": "manifest_schema_invalid"
+    },
+    {
+      "file": "reject-duplicate-capabilities.json",
+      "verdict": "reject",
+      "code": "manifest_capabilities_invalid"
+    },
+    {
+      "file": "reject-invalid-constraint.json",
+      "verdict": "reject",
+      "code": "manifest_constraint_invalid"
+    }
+  ]
+}

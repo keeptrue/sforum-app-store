@@ -1,0 +1,12 @@
+{
+  "manifestVersion": 3,
+  "id": "sforum.conformance.plugin",
+  "name": "Conformance Plugin",
+  "description": "Fixture used to keep the store parser aligned with the host.",
+  "url": "https://github.com/example/conformance-plugin",
+  "author": { "name": "SForum", "url": "https://github.com/example" },
+  "version": "1.2.3",
+  "type": "plugin",
+  "sforumVersion": ">=1.0.0 <2.0.0",
+  "capabilities": ["host.api"]
+}

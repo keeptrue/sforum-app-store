@@ -1,0 +1,28 @@
+{
+  "name": "sforum-app-store",
+  "private": true,
+  "packageManager": "bun@1.4.2",
+  "workspaces": [
+    "service"
+  ],
+  "scripts": {
+    "dev": "bun run --filter service dev",
+    "build": "bun run --filter service build",
+    "start": "bun run --filter service start",
+    "contract:generate": "bun run --filter service contract:generate",
+    "manifest:sync": "bun run --filter service manifest:sync",
+    "manifest:check": "bun run --filter service manifest:check",
+    "manifest:conformance": "bun run --filter service manifest:conformance",
+    "capabilities:sync": "bun run --filter service capabilities:sync",
+    "capabilities:check": "bun run --filter service capabilities:check",
+    "test": "bun run --filter service test",
+    "db:generate": "bun run --filter service db:generate",
+    "db:migrate": "bun run --filter service db:migrate",
+    "worker": "bun run --filter service worker",
+    "admin:reset-password": "cd service && bun run admin:reset-password",
+    "settings:public-url": "cd service && bun run settings:public-url",
+    "backup:legacy-media": "bun run --filter service backup:legacy-media",
+    "seed:dev": "bun run --filter service seed:dev",
+    "typecheck": "bun run --filter service typecheck"
+  }
+}

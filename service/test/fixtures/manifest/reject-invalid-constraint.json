@@ -1,0 +1,11 @@
+{
+  "manifestVersion": 3,
+  "id": "sforum.conformance.invalid-constraint",
+  "name": "Invalid Constraint",
+  "description": "sforumVersion must parse as a Masterminds constraint.",
+  "url": "https://github.com/example/invalid-constraint",
+  "author": { "name": "SForum" },
+  "version": "1.0.0",
+  "type": "plugin",
+  "sforumVersion": "not a range"
+}

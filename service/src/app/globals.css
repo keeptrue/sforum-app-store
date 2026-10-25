@@ -1,0 +1,921 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * Design tokens — "mono ledger".
+ * One ink scale carries the whole product: near-black text, paper-grey
+ * surfaces, white cards. No brand hue competes with the evidence (versions,
+ * digests, constraints); sage is the only chromatic signal and it is reserved
+ * for "this is staged / safe to read" states. Light theme is the baseline,
+ * dark theme is a first-class inversion of the same scale.
+ *
+ * Category tints are tokens too (see `.plate-*` below). A page never hardcodes
+ * a color, and a category never gets a hue of its own.
+ */
+
+:root {
+  /*
+   * Global UI scale. The product's type and spacing are authored in px at the
+   * call sites (text-[13px], h-[34px], the 248px rail, --app-topbar-h: 72px),
+   * so raising the root font size would only move rem-based spacing and shear
+   * every fixed box against its now-larger contents. `zoom` scales the whole
+   * box tree the way browser page zoom does, so proportions hold everywhere.
+   */
+  --ui-scale: 1.1;
+
+  --radius: 0.75rem;
+  /* 11px — the one control radius shared by rail links, buttons and inline chips. */
+  --radius-control: 0.6875rem;
+  /* Height of the shell top bar. Pages that fill the viewport subtract it. */
+  --app-topbar-h: 72px;
+  /*
+   * Viewport height expressed in the app's own (zoomed) coordinate space.
+   * Viewport units are the one thing `zoom` does not divide, so a raw `100dvh`
+   * renders 10% taller than the window and every full-height box overflows.
+   * Full-height surfaces subtract this, never `dvh` directly.
+   */
+  --viewport-h: calc(100dvh / var(--ui-scale));
+  color-scheme: light;
+
+  --background: #f3f3f1;
+  --foreground: #121212;
+
+  --card: #ffffff;
+  --card-foreground: #121212;
+
+  --popover: #ffffff;
+  --popover-foreground: #121212;
+
+  --primary: #121212;
+  --primary-foreground: #ffffff;
+
+  --secondary: #efefec;
+  --secondary-foreground: #3a3a38;
+
+  --muted: #ededea;
+  /* #6b6b66 over --background: 4.8:1 (was #74746f at 4.23:1, under AA for body text). */
+  --muted-foreground: #6b6b66;
+
+  --accent: #e9e9e5;
+  --accent-foreground: #121212;
+
+  --destructive: #a4463c;
+  --destructive-foreground: #fff7f5;
+
+  --success: #4f6b57;
+  --warning: #8a6a2f;
+
+  /*
+   * Syntax roles for rendered README code. They are aliases, not new hues: highlighting
+   * must not introduce a colour the rest of the product never uses, and the dark theme
+   * gets the right values for free because `var()` resolves where it is used.
+   */
+  --code-string: var(--success);
+  --code-number: var(--warning);
+  --code-comment: var(--muted-foreground);
+  --code-meta: var(--destructive);
+
+  --border: #e3e3df;
+  --input: #d8d8d3;
+  --ring: #121212;
+
+  --sidebar: #f3f3f1;
+  --sidebar-foreground: #121212;
+  --sidebar-border: #e3e3df;
+
+  /* Evidence surfaces: rows that carry digests, versions, constraints. */
+  --evidence: #f7f7f5;
+  --evidence-foreground: #565654;
+
+  /* Plate tints (light): the muted grey family under a product glyph. */
+  --plate-a: #ebebe8;
+  --plate-b: #dadad6;
+  --plate-ink: rgba(18, 18, 18, 0.64);
+  --radius-card: 1.375rem;
+  --radius-plate: 1.0625rem;
+  --radius-panel: 1.625rem;
+  --radius-cup: 1.125rem;
+}
+
+/*
+ * `zoom` is the only knob that scales a px-authored UI uniformly, and it is
+ * recent in Gecko. Where it is missing the scale silently falls back to 1, so
+ * the correction above has to fall back with it or full-height boxes come out
+ * 10% short.
+ */
+@supports not (zoom: 1.1) {
+  :root {
+    --ui-scale: 1;
+  }
+}
+
+.dark {
+  color-scheme: dark;
+
+  --background: #131312;
+  --foreground: #f2f2ef;
+
+  --card: #1a1a19;
+  --card-foreground: #f2f2ef;
+
+  --popover: #1c1c1b;
+  --popover-foreground: #f2f2ef;
+
+  --primary: #f2f2ef;
+  --primary-foreground: #131312;
+
+  --secondary: #232322;
+  --secondary-foreground: #e6e6e1;
+
+  --muted: #232322;
+  --muted-foreground: #9a9a94;
+
+  --accent: #272725;
+  --accent-foreground: #f2f2ef;
+
+  --destructive: #d9897c;
+  --destructive-foreground: #1a0f0d;
+
+  --success: #93b39c;
+  --warning: #d0a763;
+
+  --border: #2b2b29;
+  --input: #3a3a37;
+  --ring: #d9d9d4;
+
+  --sidebar: #131312;
+  --sidebar-foreground: #f2f2ef;
+  --sidebar-border: #2b2b29;
+
+  --evidence: #1e1e1c;
+  --evidence-foreground: #c9c9c3;
+
+  --plate-a: #2a2a28;
+  --plate-b: #1e1e1d;
+  --plate-ink: rgba(242, 242, 239, 0.62);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-evidence: var(--evidence);
+  --color-evidence-foreground: var(--evidence-foreground);
+
+  --radius-sm: calc(var(--radius) - 3px);
+  --radius-md: calc(var(--radius) - 1px);
+  --radius-lg: calc(var(--radius) - 2px);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-control: 0.6875rem;
+  --radius-card: 1.375rem;
+  --radius-plate: 1.0625rem;
+  --radius-panel: 1.625rem;
+  --radius-cup: 1.125rem;
+  --radius-pill: 999px;
+
+  /*
+   * Type system: Instrument Sans carries headlines and figures alike, so the
+   * product reads as one voice. CJK body text falls through to the system
+   * stack on purpose — shipping a Chinese webfont costs megabytes for zero
+   * tone gain. Mono is for machine evidence only: versions, digests,
+   * platforms, constraints, extension IDs.
+   */
+  --font-sans: var(--font-instrument), "PingFang SC", "HarmonyOS Sans SC",
+    "Noto Sans SC", "Microsoft YaHei", sans-serif;
+  --font-display: var(--font-instrument), "PingFang SC", "Noto Sans SC",
+    "Microsoft YaHei", sans-serif;
+  --font-mono: var(--font-jetbrains), ui-monospace, "SF Mono", Menlo, Consolas,
+    monospace;
+
+  /*
+   * Type scale floor. CJK glyphs carry far less visual weight per pixel than
+   * Latin at the same size, so 12px is the floor and not the default: xs moves
+   * to 13px, and every literal size below 12px was raised at the call sites.
+   */
+  --text-xs: 0.8125rem;
+  --text-xs--line-height: 1.65;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  /*
+   * No `antialiased` here. Subpixel smoothing is the default on macOS/Windows and
+   * it keeps CJK strokes solid; `antialiased` thins them, which reads as "the
+   * type is smaller than it is" on the light paper background.
+   */
+  html {
+    -moz-osx-font-smoothing: auto;
+    /* Default the site to 110% so it reads comfortably without browser zoom. */
+    zoom: var(--ui-scale);
+  }
+  body {
+    @apply bg-background text-foreground font-sans;
+    font-size: 15px;
+    line-height: 1.7;
+    /* CJK is set on a square em: negative tracking only crushes the glyph. */
+    letter-spacing: 0;
+    font-feature-settings: "ss01";
+  }
+  ::selection {
+    @apply bg-primary text-primary-foreground;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+@layer utilities {
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+  }
+  /* Display figures: stats and headline numerals. */
+  .font-display {
+    font-family: var(--font-display);
+    font-feature-settings: "tnum";
+    letter-spacing: -0.02em;
+  }
+
+  /*
+   * Category plates. The glyph sits on a two-tone grey wash; the family stays
+   * monochrome so the only thing a tint can say is "which shelf is this on".
+   */
+  .plate-surface {
+    background-image: linear-gradient(150deg, var(--plate-a), var(--plate-b));
+  }
+  .plate-content {
+    --plate-a: #ebebe8;
+    --plate-b: #dadad6;
+  }
+  .plate-appearance {
+    --plate-a: #edebe8;
+    --plate-b: #dcd9d4;
+  }
+  .plate-community {
+    --plate-a: #e9ece8;
+    --plate-b: #d8dcd6;
+  }
+  .plate-integration {
+    --plate-a: #ebebeb;
+    --plate-b: #d9d9d9;
+  }
+  .plate-ops {
+    --plate-a: #ece9e3;
+    --plate-b: #dad6ce;
+  }
+  .plate-security {
+    --plate-a: #eaeae8;
+    --plate-b: #d8d8d5;
+  }
+  .dark .plate-content {
+    --plate-a: #2a2a28;
+    --plate-b: #1e1e1d;
+  }
+  .dark .plate-appearance {
+    --plate-a: #2c2a27;
+    --plate-b: #201e1c;
+  }
+  .dark .plate-community {
+    --plate-a: #272c28;
+    --plate-b: #1c211d;
+  }
+  .dark .plate-integration {
+    --plate-a: #2b2b2b;
+    --plate-b: #1f1f1f;
+  }
+  .dark .plate-ops {
+    --plate-a: #2c2a25;
+    --plate-b: #201e1a;
+  }
+  .dark .plate-security {
+    --plate-a: #2a2a29;
+    --plate-b: #1e1e1d;
+  }
+
+  /* Concentric rings + a hairline rule, drawn in CSS so no page ships an inline SVG icon. */
+  .plate-rings {
+    background-image:
+      radial-gradient(
+        circle at 84% 4%,
+        transparent 0 25px,
+        color-mix(in srgb, var(--foreground) 13%, transparent) 25px 26px,
+        transparent 26px 54px,
+        color-mix(in srgb, var(--foreground) 13%, transparent) 54px 55px,
+        transparent 55px 83px,
+        color-mix(in srgb, var(--foreground) 13%, transparent) 83px 84px,
+        transparent 84px
+      ),
+      linear-gradient(
+        90deg,
+        color-mix(in srgb, var(--foreground) 10%, transparent) 0 88px,
+        transparent 88px
+      );
+    background-repeat: no-repeat;
+    background-position:
+      right -18px top -34px,
+      20px bottom 15px;
+    background-size:
+      260px 260px,
+      100% 1px;
+    opacity: 0.9;
+  }
+
+  /* The pressed-in control: one spring, one shadow, no second accent. */
+  .press {
+    transition:
+      transform 0.16s cubic-bezier(0.34, 1.42, 0.64, 1),
+      background-color 0.16s,
+      border-color 0.16s,
+      color 0.16s,
+      box-shadow 0.16s;
+  }
+  .press:active {
+    transform: scale(0.97);
+  }
+}
+
+@keyframes overlay-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/*
+ * Only opacity + scale here: the dialog is centred with Tailwind's `translate`
+ * property, so animating `transform: translate(...)` would compose with it and
+ * fling the panel a full width off-centre for the duration of the animation.
+ */
+@keyframes content-in {
+  from {
+    opacity: 0;
+    transform: scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes sheet-in {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+/*
+ * Route progress, under the top bar.
+ *
+ * One ink line: no track, no label, no second colour — the shell already says where you
+ * are, and the only new information is "the press landed, the server is still working".
+ * Width is the value, so the transition duration has to match the tick that feeds it
+ * (200ms) or the motion stutters. `data-phase` carries the state so React never animates
+ * anything itself; `data-stalled` is the long-wait breathing.
+ */
+.nav-progress {
+  opacity: 0;
+  transition:
+    width 200ms linear,
+    opacity 160ms ease-out;
+}
+
+.nav-progress[data-phase="running"] {
+  opacity: 1;
+}
+
+/* Committed: hold for a beat, then fade. The fade *is* the completion signal. */
+.nav-progress[data-phase="settling"] {
+  opacity: 0;
+  transition:
+    width 180ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    opacity 180ms ease-in 80ms;
+}
+
+/*
+ * The long-wait pulse animates `filter`, not `opacity`: an opacity animation outranks the
+ * opacity transition above, and dropping it on commit would snap the line out instead of
+ * fading it. A separate property keeps the fade authoritative.
+ */
+.nav-progress[data-stalled="true"] {
+  animation: nav-progress-stall 1.5s ease-in-out infinite;
+}
+
+@keyframes nav-progress-stall {
+  0%,
+  100% {
+    filter: none;
+  }
+  50% {
+    filter: opacity(0.45);
+  }
+}
+
+/*
+ * Reduced motion keeps the information and drops the movement: the line still appears and
+ * still fills in steps, it just stops sliding and breathing.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .nav-progress,
+  .nav-progress[data-phase="settling"] {
+    transition: none;
+  }
+  .nav-progress[data-stalled="true"] {
+    animation: none;
+  }
+}
+
+/* Narrow viewports get a shorter bar; the var is the single source for the height. */
+@media (max-width: 1023px) {
+  :root {
+    --app-topbar-h: 64px;
+  }
+}
+
+/*
+ * Shared surface + type utilities. Every face (storefront, developer console, admin) uses
+ * these instead of re-declaring `rounded-* border border-border bg-card` per file: one
+ * radius scale, one border, one card colour, and a header that reads the same everywhere.
+ */
+@utility surface {
+  border-radius: var(--radius-card);
+  border: 1px solid var(--border);
+  background-color: var(--card);
+}
+
+@utility surface-panel {
+  border-radius: var(--radius-panel);
+  border: 1px solid var(--border);
+  background-color: var(--card);
+}
+
+@utility surface-quiet {
+  border-radius: var(--radius-cup);
+  border: 1px solid var(--border);
+  background-color: var(--evidence);
+}
+
+@utility surface-dashed {
+  border-radius: var(--radius-card);
+  border: 1px dashed var(--input);
+}
+
+@utility page-title {
+  font-family: var(--font-display);
+  font-size: 1.75rem;
+  line-height: 1.25;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+@utility page-lede {
+  font-size: 0.875rem;
+  line-height: 1.7;
+  color: var(--muted-foreground);
+}
+
+@utility eyebrow {
+  font-size: 11px;
+  font-weight: 600;
+  /* .12em is a Latin caps habit; on CJK it only pulls the characters apart. */
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+
+@utility section-title {
+  font-family: var(--font-display);
+  font-size: 0.9375rem;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+/*
+ * Rendered README.
+ *
+ * The HTML is produced on the server (`lib/readme/render.ts`) and sanitised there; this
+ * block only restores the reading rhythm Tailwind's preflight removes — headings, lists,
+ * code, tables — and it stays inside the token palette so light and dark both hold. It is
+ * scoped to `.readme` because the same markup is rendered in three faces (storefront,
+ * developer dashboard, review console) and must look like one document everywhere.
+ *
+ * Two structural facts drive the scale below:
+ *
+ * 1. The renderer clamps an author's `#` to `h2` and leaves everything under it alone, so the
+ *    first `h2` is the document title and later `h2`s are sections. Size separates them even
+ *    when the author used `#` for the title and `##` for sections.
+ * 2. `###` is the level most READMEs use for real sections, so it has to be visibly larger
+ *    than body text. An earlier version shifted every heading down one level, which landed
+ *    `###` on `h4` at `1em` — a section that looked like a bold paragraph.
+ */
+.readme {
+  color: var(--foreground);
+  font-size: 13px;
+  line-height: 1.8;
+  /* A README is arbitrary text: long URLs and unbroken tokens must wrap, not widen the
+     column, and `min-width: 0` keeps a wide table from sizing its grid column by content. */
+  min-width: 0;
+  overflow-wrap: break-word;
+}
+
+/* Only tokens that cannot break on their own get the aggressive rule; prose keeps word
+   boundaries instead of being split mid-word. */
+.readme a,
+.readme code {
+  overflow-wrap: anywhere;
+}
+
+.readme > :first-child {
+  margin-top: 0;
+}
+
+.readme > :last-child {
+  margin-bottom: 0;
+}
+
+.readme h1,
+.readme h2,
+.readme h3,
+.readme h4,
+.readme h5,
+.readme h6 {
+  font-family: var(--font-display);
+  font-weight: 600;
+  line-height: 1.4;
+  letter-spacing: 0;
+  position: relative;
+  /* Anchor jumps must not land under the sticky top bar. */
+  scroll-margin-top: calc(var(--app-topbar-h) + 16px);
+}
+
+.readme h1,
+.readme h2 {
+  font-size: 1.32em;
+  margin: 1.7em 0 0.6em;
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid var(--border);
+}
+
+/* The document title, not a section: larger, and without the section rule. */
+.readme > h2:first-child {
+  font-size: 1.55em;
+  margin-top: 0;
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.readme h3 {
+  font-size: 1.18em;
+  margin: 1.5em 0 0.5em;
+}
+
+.readme h4 {
+  font-size: 1.08em;
+  margin: 1.3em 0 0.4em;
+}
+
+.readme h5,
+.readme h6 {
+  font-size: 1em;
+  margin: 1.2em 0 0.35em;
+  color: var(--muted-foreground);
+}
+
+/* GitHub's affordance: the permalink is invisible until the heading is hovered or the link
+   itself is focused. It stays in the document for deep links and screen-reader-free copying. */
+.readme .header-anchor {
+  position: absolute;
+  left: -1.05em;
+  top: 0;
+  padding-right: 0.2em;
+  color: var(--muted-foreground);
+  text-decoration: none;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.readme :is(h2, h3, h4, h5, h6):hover > .header-anchor,
+.readme .header-anchor:focus-visible {
+  opacity: 1;
+}
+
+.readme p {
+  margin: 0.7em 0;
+}
+
+.readme ul,
+.readme ol {
+  margin: 0.7em 0;
+  padding-left: 1.5em;
+}
+
+.readme ul {
+  list-style: disc;
+}
+
+.readme ol {
+  list-style: decimal;
+}
+
+.readme li {
+  margin: 0.25em 0;
+}
+
+.readme li > ul,
+.readme li > ol {
+  margin: 0.25em 0;
+}
+
+.readme a {
+  color: var(--foreground);
+  text-decoration: underline;
+  text-decoration-color: var(--input);
+  text-underline-offset: 2px;
+}
+
+.readme a:hover {
+  text-decoration-color: currentColor;
+}
+
+.readme code {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  background-color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 0.1em 0.35em;
+}
+
+/*
+ * Code blocks: the wrapper exists so the language chip and the copy button stay put while
+ * the code scrolls sideways. A `pre` on its own scrolls its children with the content, which
+ * is why the chrome lives outside it.
+ */
+.readme .readme-code {
+  position: relative;
+  margin: 0.9em 0;
+  background-color: var(--evidence);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  overflow: hidden;
+}
+
+.readme .readme-code pre {
+  margin: 0;
+  padding: 1.55rem 0.9rem 0.8rem;
+  background: none;
+  border: 0;
+  border-radius: 0;
+  overflow-x: auto;
+}
+
+.readme .readme-code[data-lang]::before {
+  content: attr(data-lang);
+  position: absolute;
+  top: 0;
+  left: 0;
+  padding: 0.1rem 0.45rem;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1.5;
+  color: var(--muted-foreground);
+  background-color: var(--muted);
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  border-bottom-right-radius: var(--radius-control);
+  pointer-events: none;
+}
+
+.readme pre {
+  margin: 0.9em 0;
+  padding: 0.75rem 0.9rem;
+  background-color: var(--evidence);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  overflow-x: auto;
+}
+
+.readme pre code {
+  background: none;
+  border: 0;
+  padding: 0;
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+/* Injected by the client component; kept here so it inherits the document's chrome. */
+.readme .readme-copy {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background-color: var(--card);
+  color: var(--muted-foreground);
+  font-family: var(--font-display);
+  font-size: 11px;
+  line-height: 1;
+  opacity: 0;
+  transition: opacity 0.12s ease, color 0.12s ease;
+}
+
+.readme .readme-code:hover .readme-copy,
+.readme .readme-copy:focus-visible,
+.readme .readme-copy[data-copied="true"] {
+  opacity: 1;
+}
+
+.readme .readme-copy:hover {
+  color: var(--foreground);
+}
+
+/*
+ * Tables scroll inside their own box. The wrapper (emitted by the renderer) is what makes
+ * that work: `display: block` on `<table>` itself lets `thead` and `tbody` resolve their
+ * columns independently, so a two-image table ends up with two different column widths.
+ */
+.readme .readme-table {
+  margin: 0.9em 0;
+  max-width: 100%;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+}
+
+.readme .readme-table:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+.readme table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+
+.readme th,
+.readme td {
+  padding: 0.45rem 0.65rem;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid var(--border);
+}
+
+.readme tr:last-child td {
+  border-bottom: 0;
+}
+
+.readme th + th,
+.readme td + td {
+  border-left: 1px solid var(--border);
+}
+
+.readme th {
+  background-color: var(--muted);
+  font-weight: 600;
+}
+
+.readme img {
+  max-width: 100%;
+  height: auto;
+  vertical-align: middle;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background-color: var(--card);
+}
+
+/* A badge row is a paragraph whose element children are all links (a shield is almost always
+   wrapped in one). Lay it out as a row with a real gap, and drop the screenshot chrome: a
+   20px shield does not want a frame. Text-only paragraphs never match, because the `:not`
+   clause requires that no non-link element exists. */
+.readme p:has(> a > img):not(:has(> :not(a))) {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4em;
+  margin: 0.6em 0;
+}
+
+.readme p:has(> a > img):not(:has(> :not(a))) img {
+  border: 0;
+  border-radius: 0;
+  background: none;
+}
+
+.readme img[role="button"] {
+  cursor: zoom-in;
+}
+
+.readme blockquote {
+  margin: 0.9em 0;
+  padding: 0.1em 0 0.1em 0.9em;
+  border-left: 3px solid var(--border);
+  color: var(--muted-foreground);
+}
+
+.readme hr {
+  margin: 1.5em 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+}
+
+.readme details {
+  margin: 0.9em 0;
+}
+
+/* GFM task list checkboxes are read-only: they describe the repository, not this page. */
+.readme input[type="checkbox"] {
+  margin-right: 0.45em;
+  vertical-align: middle;
+  accent-color: var(--foreground);
+}
+
+.readme summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+/*
+ * Syntax roles. `highlight.js` emits `hljs-*` classes; mapping a handful of them onto the
+ * existing palette keeps a code block from importing a second colour system.
+ */
+.readme .hljs-comment,
+.readme .hljs-quote {
+  color: var(--code-comment);
+  font-style: italic;
+}
+
+.readme .hljs-keyword,
+.readme .hljs-selector-tag,
+.readme .hljs-literal,
+.readme .hljs-type,
+.readme .hljs-title,
+.readme .hljs-section,
+.readme .hljs-name {
+  color: var(--foreground);
+  font-weight: 600;
+}
+
+.readme .hljs-string,
+.readme .hljs-attr,
+.readme .hljs-template-variable,
+.readme .hljs-addition {
+  color: var(--code-string);
+}
+
+.readme .hljs-number,
+.readme .hljs-built_in,
+.readme .hljs-symbol,
+.readme .hljs-bullet {
+  color: var(--code-number);
+}
+
+.readme .hljs-meta,
+.readme .hljs-deletion {
+  color: var(--code-meta);
+}
+
+.readme .hljs-emphasis {
+  font-style: italic;
+}
+
+.readme .hljs-strong {
+  font-weight: 700;
+}

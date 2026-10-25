@@ -1,0 +1,37 @@
+import { getDb } from "@/db/client";
+import { jsonError, requestIp } from "@/lib/auth/http";
+import {
+  authorizeDashboardRequest,
+  jsonOk,
+  productErrorResponse,
+  yankReleaseVersion,
+} from "@/lib/products/service";
+
+export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
+
+type Context = { params: Promise<{ id: string }> };
+
+export async function POST(request: Request, context: Context) {
+  try {
+    const db = getDb();
+    const auth = await authorizeDashboardRequest(db, request, { mutation: true });
+    if (!auth.ok) return auth.response;
+
+    const body = (await request.json().catch(() => undefined)) as
+      | { reason?: unknown }
+      | undefined;
+    if (body === undefined) return jsonError("invalid_json", 400);
+
+    const { id } = await context.params;
+    const product = await yankReleaseVersion(db, {
+      accountId: auth.accountId,
+      versionId: id,
+      reason: body.reason,
+      ip: requestIp(request),
+    });
+    return jsonOk({ product });
+  } catch (error) {
+    return productErrorResponse(error);
+  }
+}

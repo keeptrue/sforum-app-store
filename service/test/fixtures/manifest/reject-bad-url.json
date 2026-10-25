@@ -1,0 +1,11 @@
+{
+  "manifestVersion": 3,
+  "id": "sforum.conformance.bad-url",
+  "name": "Bad Url",
+  "description": "Only http and https homepages are accepted.",
+  "url": "ftp://example.com/conformance",
+  "author": { "name": "SForum" },
+  "version": "1.0.0",
+  "type": "plugin",
+  "sforumVersion": "*"
+}

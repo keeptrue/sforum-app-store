@@ -1,0 +1,11 @@
+{
+  "manifestVersion": 3,
+  "id": "SForum.Conformance.Upper",
+  "name": "Uppercase Id",
+  "description": "The host schema validates the raw document before Normalize.",
+  "url": "https://github.com/example/upper",
+  "author": { "name": "SForum" },
+  "version": "1.0.0",
+  "type": "plugin",
+  "sforumVersion": "*"
+}
