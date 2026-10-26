@@ -10,6 +10,7 @@ import {
   products,
   releaseAssets,
   releaseVersions,
+  repoReleases,
   type BrandSource,
 } from "@/db/schema";
 
@@ -407,6 +408,37 @@ export async function findRepoFullName(
     .where(eq(githubRepos.repoId, repoId))
     .limit(1);
   return row?.fullName ?? null;
+}
+
+export type RepoSyncRow = {
+  tag: string;
+  state: string;
+  lastSyncedAt: Date | null;
+  error: string | null;
+};
+
+/**
+ * The newest release row for a repository, regardless of whether its version was written.
+ * `sync_state` is the worker's verdict on the release itself (`syncing`, `synced`,
+ * `needs_attention`, `failed`), which is exactly what a developer needs when a tag exists on
+ * GitHub but no version appeared in the store.
+ */
+export async function findLatestRepoSync(
+  db: DbExecutor,
+  repoId: number,
+): Promise<RepoSyncRow | null> {
+  const [row] = await db
+    .select({
+      tag: repoReleases.tag,
+      state: repoReleases.syncState,
+      lastSyncedAt: repoReleases.lastSyncedAt,
+      error: repoReleases.syncError,
+    })
+    .from(repoReleases)
+    .where(eq(repoReleases.repoId, repoId))
+    .orderBy(desc(repoReleases.createdAt))
+    .limit(1);
+  return row ?? null;
 }
 
 // ---------------------------------------------------------------------------

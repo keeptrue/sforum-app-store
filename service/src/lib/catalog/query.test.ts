@@ -12,7 +12,9 @@ import { closeDb, getDb, getPool, type Db } from "@/db/client";
 import {
   accounts,
   assets,
+  githubInstallations,
   githubRepos,
+  oauthIssuers,
   productReadmes,
   productTranslations,
   products,
@@ -32,6 +34,7 @@ import {
   listProductReleases,
   loadProductDetail,
   parseCatalogQuery,
+  type CatalogPageBody,
   type CatalogQuery,
 } from "@/lib/catalog/query";
 
@@ -134,7 +137,10 @@ const FIXTURES: SeedProduct[] = [
         state: "yanked",
         constraint: ">=1.0.0",
         publishedAt: at("2026-08-01"),
-        notes: "first release",
+        // Markdown source with the shapes a GitHub release body actually uses: a section
+        // heading, a list and a fenced block. `notesHtml` has to come out of the same
+        // renderer/allow-list as the README, with headings demoted under the release head.
+        notes: ["## 变更", "", "- 支持 GFM 表格", "", "```bash", "sforum extension validate .", "```"].join("\n"),
         assets: [{ os: "linux", arch: "amd64", sha: sha("md-1000") }],
       },
       {
@@ -263,6 +269,51 @@ const FIXTURES: SeedProduct[] = [
     ],
   },
   {
+    // The product that started this round: it declares a prerelease bound
+    // (`>=3.0.12-alpha.7`) that only a tag-derived host version satisfies. It stays out of the
+    // `sforum=1.5.0` lists and appears as soon as the host is new enough.
+    slug: "oauth2-provider",
+    extensionId: "sforum.oauth2-provider",
+    name: "OAuth2 Provider",
+    kind: "plugin",
+    status: "published",
+    repoId: 110,
+    repoFullName: "acme/oauth2-provider",
+    updatedAt: at("2026-09-26"),
+    versions: [
+      {
+        version: "3.0.16",
+        channel: "stable",
+        state: "published",
+        constraint: ">=3.0.12-alpha.7",
+        publishedAt: at("2026-09-20"),
+        assets: [{ os: "linux", arch: "amd64", sha: sha("oauth2-3016") }],
+      },
+    ],
+  },
+  {
+    // Declares a release line no test host reaches, so an explicit `compatible` run has
+    // something to drop that is "too new" rather than "too old".
+    slug: "future",
+    extensionId: "sforum.future",
+    name: "Future Only",
+    kind: "plugin",
+    status: "published",
+    repoId: 120,
+    repoFullName: "acme/future",
+    updatedAt: at("2026-09-25"),
+    versions: [
+      {
+        version: "1.0.0",
+        channel: "stable",
+        state: "published",
+        constraint: ">=4.0.0",
+        publishedAt: at("2026-09-19"),
+        assets: [{ os: "linux", arch: "amd64", sha: sha("future-1000") }],
+      },
+    ],
+  },
+  {
     slug: "legacy",
     extensionId: "sforum.legacy",
     name: "Legacy",
@@ -370,11 +421,66 @@ const FIXTURES: SeedProduct[] = [
       },
     ],
   },
+  {
+    // The state `latestPlatforms` exists for: the newest release dropped a platform an older
+    // one still ships. `platforms` (the union) says "a linux host can install something";
+    // `latestPlatforms` says "the version the card names is darwin-only". Without both a
+    // client cannot tell this apart from "nothing here runs on linux".
+    slug: "arch-shift",
+    extensionId: "sforum.arch-shift",
+    name: "Arch Shift",
+    kind: "plugin",
+    status: "published",
+    repoId: 130,
+    repoFullName: "acme/arch-shift",
+    upstreamState: "connected",
+    updatedAt: at("2026-09-20"),
+    versions: [
+      {
+        version: "1.0.0",
+        channel: "stable",
+        state: "published",
+        constraint: ">=1.0.0",
+        publishedAt: at("2026-08-20"),
+        assets: [{ os: "linux", arch: "amd64", sha: sha("arch-shift-1000") }],
+      },
+      {
+        version: "2.0.0",
+        channel: "stable",
+        state: "published",
+        constraint: ">=1.0.0",
+        publishedAt: at("2026-09-20"),
+        assets: [{ os: "darwin", arch: "arm64", sha: sha("arch-shift-2000") }],
+      },
+    ],
+  },
 ];
 
-const VISIBLE_SLUGS = ["markdown", "paper", "mixed", "mac-only", "percent"];
+const VISIBLE_SLUGS = [
+  "markdown",
+  "paper",
+  "mixed",
+  "mac-only",
+  "percent",
+  "oauth2-provider",
+  "future",
+  "arch-shift",
+];
 
 async function seed(): Promise<void> {
+  // The GitHub side of `Author`: bound repositories live under this installation account.
+  await db.insert(githubInstallations).values({ installationId: 1, accountLogin: "acme" });
+
+  // The forum side's profile link comes from the issuer row this account logged in through.
+  await db.insert(oauthIssuers).values({
+    issuerKey: "forum-a",
+    displayName: "Forum A",
+    baseUrl: "https://forum.test/",
+    clientId: "client-1",
+    clientSecretCiphertext: "v1.ciphertext",
+    clientSecretKid: "kid-1",
+  });
+
   await db.insert(accounts).values([
     {
       id: ADA,
@@ -589,6 +695,9 @@ function query(overrides: Partial<CatalogQuery> = {}): CatalogQuery {
     sforumBuild: null,
     os: null,
     arch: null,
+    // Mirrors `parseCatalogQuery`: an absent parameter is `strict`, so a helper that forgot
+    // this field would silently test the widened list instead of the default one.
+    platform: "strict",
     compat: "compatible",
     q: null,
     category: null,
@@ -617,12 +726,39 @@ async function slugs(params: Partial<CatalogQuery> = {}): Promise<string[]> {
   return body.items.map((item) => item.slug);
 }
 
+/**
+ * Route-level read: goes through `parseCatalogQuery`, so the compat default that depends on
+ * the host build is the one the service actually applies.
+ */
+async function catalogPage(params: Record<string, string> = {}): Promise<CatalogPageBody> {
+  const response = await catalogGET(new Request(catalogUrl(params)));
+  expect(response.status).toBe(200);
+  return (await response.json()) as CatalogPageBody;
+}
+
 describe("parseCatalogQuery", () => {
   test("applies defaults", () => {
     expect(parseCatalogQuery(new URLSearchParams())).toEqual({
       ok: true,
       query: query(),
     });
+  });
+
+  test("defaults compat by host build", () => {
+    const compatOf = (params: Record<string, string>) => {
+      const parsed = parseCatalogQuery(new URLSearchParams(params));
+      expect(parsed.ok).toBe(true);
+      if (!parsed.ok) return null;
+      return parsed.query.compat;
+    };
+
+    expect(compatOf({})).toBe("compatible");
+    expect(compatOf({ sforum: "1.5.0" })).toBe("compatible");
+    // A dev build only reports an approximate core version, so it is not filtered by default.
+    expect(compatOf({ sforum: "1.5.0", sforumBuild: "dev-abc12" })).toBe("all");
+    // An explicit value always wins, including `compatible` on a dev build.
+    expect(compatOf({ sforumBuild: "dev-abc12", compat: "compatible" })).toBe("compatible");
+    expect(compatOf({ compat: "all" })).toBe("all");
   });
 
   test("reads every dimension", () => {
@@ -633,6 +769,7 @@ describe("parseCatalogQuery", () => {
         sforumBuild: "dev-abc12",
         os: "linux",
         arch: "amd64",
+        platform: "all",
         compat: "all",
         q: "mark",
         category: "content",
@@ -648,6 +785,7 @@ describe("parseCatalogQuery", () => {
       sforumBuild: "dev-abc12",
       os: "linux",
       arch: "amd64",
+      platform: "all",
       compat: "all",
       q: "mark",
       category: "content",
@@ -687,6 +825,8 @@ describe("parseCatalogQuery", () => {
       { limit: "1.5" },
       { q: "x".repeat(121) },
       { kind: "extension" },
+      { platform: "any" },
+      { platform: "ALL" },
     ];
     for (const params of cases) {
       expect(parseCatalogQuery(new URLSearchParams(params))).toEqual({
@@ -757,8 +897,21 @@ describe("catalog visibility", () => {
         { os: "darwin", arch: "arm64" },
         { os: "linux", arch: "amd64" },
       ],
+      // The card names 2.0.0-beta.1, which ships both; `platforms` above is the union over
+      // every candidate, so here the two happen to agree.
+      latestPlatforms: [
+        { os: "darwin", arch: "arm64" },
+        { os: "linux", arch: "amd64" },
+      ],
       compatibility: { status: "unknown", estimated: false },
-      owner: "Ada Lovelace",
+      author: {
+        username: "ada",
+        displayName: "Ada Lovelace",
+        avatarUrl: null,
+        // Trailing slash on the issuer base URL is trimmed exactly once.
+        profileUrl: "https://forum.test/u/ada",
+        github: { login: "acme", url: "https://github.com/acme" },
+      },
     });
   });
 
@@ -791,12 +944,20 @@ describe("catalog visibility", () => {
     expect(paper?.name).toBe("纸张主题");
     expect(paper?.summary).toBe("轻量纸张主题");
     expect(paper?.iconUrl).toBeNull();
-    expect(paper?.owner).toBe("Grace Hopper");
+    expect(paper?.author?.displayName).toBe("Grace Hopper");
 
     const mixed = body.items.find((item) => item.slug === "mixed");
     expect(mixed?.name).toBe("Mixed");
     expect(mixed?.summary).toBe("");
-    expect(mixed?.owner).toBeNull();
+    // Bounds to a repository but not to a forum account: the GitHub half still exists, and
+    // the missing half stays missing instead of being filled from the other.
+    expect(mixed?.author).toEqual({
+      username: null,
+      displayName: null,
+      avatarUrl: null,
+      profileUrl: null,
+      github: { login: "acme", url: "https://github.com/acme" },
+    });
     expect(mixed?.category).toBe("ops");
   });
 
@@ -809,6 +970,7 @@ describe("catalog visibility", () => {
       total: 0,
       nextCursor: null,
       compatibility: { status: "unknown", estimated: false },
+      compat: "compatible",
     });
   });
 });
@@ -839,8 +1001,9 @@ describe("compatibility", () => {
       "paper",
       "mac-only",
       "percent",
+      "arch-shift",
     ]);
-    expect(body.total).toBe(4);
+    expect(body.total).toBe(5);
     expect(body.compatibility).toEqual({ status: "compatible", estimated: false });
 
     const markdown = body.items.find((item) => item.slug === "markdown");
@@ -868,18 +1031,119 @@ describe("compatibility", () => {
   });
 
   test("a dev build estimates 1.0.0 and says so", async () => {
+    // `catalog` passes compat explicitly, so this is the "explicit compatible" path too.
     const { body } = await catalog({ sforumBuild: "dev-abc12" });
     expect(body.compatibility).toEqual({ status: "compatible", estimated: true });
     for (const item of body.items) {
       expect(item.compatibility.estimated).toBe(true);
     }
-    expect(body.items.map((item) => item.slug)).toEqual(["paper", "mac-only", "percent"]);
+    expect(body.items.map((item) => item.slug)).toEqual([
+      "paper",
+      "mac-only",
+      "percent",
+      "arch-shift",
+    ]);
+  });
+
+  test("a dev build defaults to compat=all and drops nothing", async () => {
+    const body = await catalogPage({ sforum: "1.5.0", sforumBuild: "dev-abc12" });
+    expect(body.compat).toBe("all");
+    expect(body.items.map((item) => item.slug)).toEqual(VISIBLE_SLUGS);
+    // Unfiltered is not the same as "compatible": each card still carries its own verdict.
+    expect(body.items.find((item) => item.slug === "mixed")?.compatibility).toEqual({
+      status: "incompatible",
+      estimated: true,
+    });
+  });
+
+  test("a non-dev build still defaults to compat=compatible", async () => {
+    const body = await catalogPage({ sforum: "1.5.0" });
+    expect(body.compat).toBe("compatible");
+    expect(body.items.map((item) => item.slug)).toEqual([
+      "markdown",
+      "paper",
+      "mac-only",
+      "percent",
+      "arch-shift",
+    ]);
+  });
+
+  test("an explicit compat=compatible on a dev build still filters", async () => {
+    const body = await catalogPage({
+      sforum: "1.5.0",
+      sforumBuild: "dev-abc12",
+      compat: "compatible",
+    });
+    expect(body.compat).toBe("compatible");
+    expect(body.items.map((item) => item.slug)).toEqual([
+      "markdown",
+      "paper",
+      "mac-only",
+      "percent",
+      "arch-shift",
+    ]);
+  });
+
+  // The host's real dev shape is a tag-derived version carrying build metadata
+  // (`3.0.16+13.g6f94488ad`). The dev tests above drive `sforum=1.5.0`, which never exercises
+  // that string - and the whole point of this round is that this shape is not filtered away.
+  test("the real dev version string defaults to compat=all", async () => {
+    const body = await catalogPage({
+      sforum: "3.0.16+13.g6f94488ad",
+      sforumBuild: "dev-6f94488ad",
+    });
+    expect(body.compat).toBe("all");
+    expect(body.compatibility).toEqual({ status: "compatible", estimated: true });
+    expect(body.items.map((item) => item.slug)).toEqual([
+      "markdown",
+      "paper",
+      "mixed",
+      "mac-only",
+      "percent",
+      "oauth2-provider",
+      "future",
+      "arch-shift",
+    ]);
+  });
+
+  test("an explicit compat=compatible keeps oauth2-provider on the real dev version", async () => {
+    const body = await catalogPage({
+      sforum: "3.0.16+13.g6f94488ad",
+      sforumBuild: "dev-6f94488ad",
+      compat: "compatible",
+    });
+    expect(body.compat).toBe("compatible");
+    // Two products drop: `markdown` (stable needs <2.0.0, beta needs <3.0.0) and `future`
+    // (needs >=4.0.0). The tag-derived version still satisfies oauth2-provider's
+    // `>=3.0.12-alpha.7`, which is the case this round was opened for.
+    expect(body.items.map((item) => item.slug)).toEqual([
+      "paper",
+      "mixed",
+      "mac-only",
+      "percent",
+      "oauth2-provider",
+      "arch-shift",
+    ]);
+  });
+
+  test("a non-dev host with build metadata still defaults to compatible", async () => {
+    const body = await catalogPage({ sforum: "3.0.16+13.g6f94488ad", sforumBuild: "3.0.16" });
+    expect(body.compat).toBe("compatible");
+    expect(body.compatibility).toEqual({ status: "compatible", estimated: false });
+    expect(body.items.map((item) => item.slug)).toEqual([
+      "paper",
+      "mixed",
+      "mac-only",
+      "percent",
+      "oauth2-provider",
+      "arch-shift",
+    ]);
   });
 
   test("estimated stays true when a dev build also reports a real version", async () => {
     const { body } = await catalog({ sforum: "1.5.0", sforumBuild: "dev-abc12" });
     expect(body.compatibility).toEqual({ status: "compatible", estimated: true });
-    expect(body.total).toBe(4);
+    expect(body.total).toBe(5);
   });
 
   test("os/arch narrowing requires an asset on the satisfying version", async () => {
@@ -888,14 +1152,14 @@ describe("compatibility", () => {
       os: "linux",
       arch: "amd64",
     });
-    expect(linux).toEqual(["markdown", "paper", "percent"]);
+    expect(linux).toEqual(["markdown", "paper", "percent", "arch-shift"]);
 
     const darwin = await slugs({
       sforum: "1.5.0",
       os: "darwin",
       arch: "arm64",
     });
-    expect(darwin).toEqual(["paper", "mac-only", "percent"]);
+    expect(darwin).toEqual(["paper", "mac-only", "percent", "arch-shift"]);
   });
 
   test("any/any is a platform wildcard, not a literal platform", async () => {
@@ -904,7 +1168,15 @@ describe("compatibility", () => {
     // The platform filter applies even without a host version: a host always knows its
     // GOOS/GOARCH, and only the version-compatibility axis is unknown then.
     const linux = await slugs({ os: "linux", arch: "amd64" });
-    expect(linux).toEqual(["markdown", "paper", "mixed", "percent"]);
+    expect(linux).toEqual([
+      "markdown",
+      "paper",
+      "mixed",
+      "percent",
+      "oauth2-provider",
+      "future",
+      "arch-shift",
+    ]);
 
     const windows = await slugs({ os: "windows", arch: "amd64" });
     expect(windows).toEqual(["paper", "percent"]);
@@ -967,7 +1239,88 @@ describe("channel selection", () => {
       "paper",
       "mac-only",
       "percent",
+      "arch-shift",
     ]);
+  });
+});
+
+describe("platform axis", () => {
+  test("latestPlatforms describes the version the card names, not the union", async () => {
+    const { body } = await catalog();
+    const shifted = body.items.find((item) => item.slug === "arch-shift");
+    // The card names 2.0.0, which only ships darwin/arm64; 1.0.0 still ships linux/amd64.
+    // That difference is the whole reason the field exists: `platforms` alone would tell a
+    // linux admin "something here runs for you" and hide the fact that the newest release
+    // does not.
+    expect(shifted?.latestVersion).toBe("2.0.0");
+    expect(shifted?.latestPlatforms).toEqual([{ os: "darwin", arch: "arm64" }]);
+    expect(shifted?.platforms).toEqual([
+      { os: "darwin", arch: "arm64" },
+      { os: "linux", arch: "amd64" },
+    ]);
+  });
+
+  test("latestPlatforms is always a subset of platforms", async () => {
+    const { body } = await catalog();
+    for (const item of body.items) {
+      const union = new Set(item.platforms.map((platform) => `${platform.os}/${platform.arch}`));
+      for (const platform of item.latestPlatforms) {
+        expect(`${item.slug}:${union.has(`${platform.os}/${platform.arch}`)}`).toBe(
+          `${item.slug}:true`,
+        );
+      }
+    }
+  });
+
+  test("omitting platform is exactly strict", async () => {
+    const implicit = await slugs({ sforum: "1.5.0", os: "linux", arch: "amd64" });
+    const explicit = await slugs({
+      sforum: "1.5.0",
+      os: "linux",
+      arch: "amd64",
+      platform: "strict",
+    });
+    expect(explicit).toEqual(implicit);
+    // darwin-only products stay hidden in both.
+    expect(implicit).not.toContain("mac-only");
+  });
+
+  test("platform=all keeps products this host cannot run and still reports them incompatible", async () => {
+    const strict = await slugs({ sforum: "1.5.0", os: "linux", arch: "amd64" });
+    expect(strict).not.toContain("mac-only");
+
+    const widened = await catalog({
+      sforum: "1.5.0",
+      os: "linux",
+      arch: "amd64",
+      platform: "all",
+    });
+    expect(widened.body.items.map((item) => item.slug)).toContain("mac-only");
+    // Widening is visibility only. The verdict stays platform-aware, so the card can still
+    // say "this one is not installable here" instead of pretending the switch made it fit.
+    expect(widened.body.items.find((item) => item.slug === "mac-only")?.compatibility).toEqual({
+      status: "incompatible",
+      estimated: false,
+    });
+  });
+
+  test("platform=all still applies the version axis of compat", async () => {
+    // `future` needs >=4.0.0, so a 1.5.0 host must not see it even in the widened list:
+    // the switch is about architecture, not about core version.
+    const widened = await slugs({
+      sforum: "1.5.0",
+      os: "linux",
+      arch: "amd64",
+      platform: "all",
+    });
+    expect(widened).not.toContain("future");
+  });
+
+  test("platform=all keeps the every-release detail page unchanged", async () => {
+    // The detail page publishes every release regardless of platform; the client picks one.
+    const detail = await loadProductDetail(db, "arch-shift");
+    expect(detail?.latestPlatforms).toEqual([{ os: "darwin", arch: "arm64" }]);
+    expect(detail?.releases.map((release) => release.version)).toEqual(["2.0.0", "1.0.0"]);
   });
 });
 
@@ -1008,18 +1361,17 @@ describe("pagination", () => {
     expect(first.body.total).toBe(VISIBLE_SLUGS.length);
     expect(first.body.nextCursor).not.toBeNull();
 
-    const second = await catalog({ limit: 2, cursor: first.body.nextCursor });
-    expect(second.body.total).toBe(VISIBLE_SLUGS.length);
-    expect(second.body.nextCursor).not.toBeNull();
-
-    const third = await catalog({ limit: 2, cursor: second.body.nextCursor });
-    expect(third.body.nextCursor).toBeNull();
-
-    const seen = [
-      ...first.body.items.map((item) => item.slug),
-      ...second.body.items.map((item) => item.slug),
-      ...third.body.items.map((item) => item.slug),
-    ];
+    const seen = first.body.items.map((item) => item.slug);
+    let cursor = first.body.nextCursor;
+    let pages = 1;
+    while (cursor !== null) {
+      const page = await catalog({ limit: 2, cursor });
+      expect(page.body.total).toBe(VISIBLE_SLUGS.length);
+      seen.push(...page.body.items.map((item) => item.slug));
+      cursor = page.body.nextCursor;
+      pages += 1;
+    }
+    expect(pages).toBe(Math.ceil(VISIBLE_SLUGS.length / 2));
     expect(seen).toHaveLength(VISIBLE_SLUGS.length);
     expect(new Set(seen).size).toBe(VISIBLE_SLUGS.length);
     expect([...seen].sort()).toEqual([...VISIBLE_SLUGS].sort());
@@ -1081,7 +1433,7 @@ describe("ETag and conditional requests", () => {
     expect(tag).toMatch(/^"[0-9a-f]{64}"$/);
 
     const payload = await first.json();
-    expect(payload.total).toBe(4);
+    expect(payload.total).toBe(5);
 
     const second = await catalogGET(
       new Request(catalogUrl({ sforum: "1.5.0" }), {
@@ -1119,6 +1471,10 @@ describe("ETag and conditional requests", () => {
       ],
       ["os", { os: "linux" }, { os: "darwin" }],
       ["arch", { arch: "amd64" }, { arch: "arm64" }],
+      // No os/arch here on purpose: both modes then return the same rows, so this only
+      // passes when `platform` is part of the fingerprint. A shared validator would serve
+      // the strict body under an `all` request (plan §11).
+      ["platform", { platform: "strict" }, { platform: "all" }],
       ["channel", { channel: "stable" }, { channel: "beta" }],
       [
         "compat",
@@ -1187,7 +1543,7 @@ describe("catalog route errors", () => {
 });
 
 describe("product detail", () => {
-  test("assembles translations, preview, owner, repo, README and releases", async () => {
+  test("assembles translations, preview, author, repo, README and releases", async () => {
     const detail = await loadProductDetail(db, "markdown");
     expect(detail).not.toBeNull();
     if (!detail) return;
@@ -1195,7 +1551,9 @@ describe("product detail", () => {
     expect(detail.name).toBe("Markdown 增强");
     expect(detail.summary).toBe("更强的编辑体验");
     expect(detail.iconUrl).toBe(`/api/assets/${sha("icon-markdown")}`);
-    expect(detail.owner).toBe("Ada Lovelace");
+    expect(detail.author?.displayName).toBe("Ada Lovelace");
+    expect(detail.author?.username).toBe("ada");
+    expect(detail.author?.profileUrl).toBe("https://forum.test/u/ada");
     expect(detail.repoUrl).toBe("https://github.com/acme/markdown");
     expect(detail.readme).toEqual({
       html: "<h1>Markdown</h1>\n<p>支持 GFM。</p>",
@@ -1214,6 +1572,27 @@ describe("product detail", () => {
       "published",
       "yanked",
     ]);
+  });
+
+  test("publishes rendered notes HTML next to the raw Markdown source", async () => {
+    const release = await getProductRelease(db, "markdown", "1.0.0");
+    expect(release?.notes).toContain("## 变更");
+    // `##` becomes `h4`: the dialog's own title is `h2` and each release head is `h3`.
+    expect(release?.notesHtml).toContain("<h4");
+    expect(release?.notesHtml).toContain("支持 GFM 表格");
+    expect(release?.notesHtml).toContain('class="readme-code"');
+    expect(release?.notesHtml).not.toContain("<h2");
+  });
+
+  test("keeps notes and notesHtml absent together when a release has no body", async () => {
+    const release = await getProductRelease(db, "markdown", "2.0.0-beta.1");
+    expect(release?.notes ?? null).toBeNull();
+    expect(release?.notesHtml ?? null).toBeNull();
+  });
+
+  test("has no author block when neither a forum account nor a repository is bound", async () => {
+    const detail = await loadProductDetail(db, "percent");
+    expect(detail?.author ?? null).toBeNull();
   });
 
   test("hides a README cached from a repository the product is no longer bound to", async () => {
@@ -1250,9 +1629,14 @@ describe("product detail", () => {
     expect(serialized).not.toContain("browser_download_url");
     expect(serialized).not.toContain("api.github.com");
     expect(serialized).not.toContain("installations");
-    // Two web addresses are allowed and both are github.com pages: the repository itself and
-    // the README blob the rendered HTML came from. No asset host, no download URL.
+    // Four web addresses are allowed, and each one is a *page* the operator can visit:
+    // the repository, the README blob the rendered HTML came from, the maintainer's GitHub
+    // account (built from the installation login), and the maintainer's forum profile (built
+    // from the issuer base URL registered in `oauth_issuers`). None of them comes from a URL
+    // a caller supplied. No asset host, no download URL.
     expect([...serialized.matchAll(/https?:\/\/[^"\\]+/g)].map((match) => match[0]).sort()).toEqual([
+      "https://forum.test/u/ada",
+      "https://github.com/acme",
       "https://github.com/acme/markdown",
       "https://github.com/acme/markdown/blob/HEAD/README.md",
     ]);
@@ -1335,9 +1719,10 @@ describe("release history", () => {
     expect(multi?.digest).toBeUndefined();
     expect(single?.digest).toBe(sha("md-1500"));
     expect(single?.notes).toBeNull();
-    expect(releases?.find((release) => release.version === "1.0.0")?.notes).toBe(
-      "first release",
-    );
+    expect(single?.notesHtml).toBeNull();
+    // A yanked release keeps its body: the text is what a reader needs in order to judge
+    // whether the withdrawn version is the one they already run.
+    expect(releases?.find((release) => release.version === "1.0.0")?.notes).toContain("## 变更");
   });
 
   test("falls back to created_at when published_at is null", async () => {

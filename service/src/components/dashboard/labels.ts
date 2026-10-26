@@ -1,4 +1,5 @@
 import type {
+  DashboardRepoSync,
   DashboardVersion,
   ProductKind,
   ProductStatus,
@@ -74,6 +75,20 @@ export const VERSION_STATE_TONES: Record<ReleaseVersionState, BadgeTone> = {
   rejected: "destructive",
   yanked: "destructive",
   needs_attention: "warning",
+};
+
+export const SYNC_STATE_LABELS: Record<DashboardRepoSync["state"], string> = {
+  synced: "已同步",
+  needs_attention: "需要处理",
+  failed: "同步失败",
+  syncing: "同步中",
+};
+
+export const SYNC_STATE_TONES: Record<DashboardRepoSync["state"], BadgeTone> = {
+  synced: "success",
+  needs_attention: "warning",
+  failed: "destructive",
+  syncing: "muted",
 };
 
 export const CHANNEL_LABELS: Record<DashboardVersion["channel"], string> = {

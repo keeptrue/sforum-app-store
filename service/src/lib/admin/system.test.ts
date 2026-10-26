@@ -22,8 +22,11 @@ async function ensurePgbossSchema(): Promise<void> {
     create table if not exists pgboss.job (
       id uuid primary key default gen_random_uuid(),
       name text not null,
-      state text not null default 'created'
+      state text not null default 'created',
+      created_on timestamptz not null default now()
     );
+    alter table pgboss.job
+      add column if not exists created_on timestamptz not null default now();
   `);
 }
 
@@ -170,8 +173,22 @@ describe("queue backlog", () => {
     if (!health.queues.ok) return;
 
     expect(health.queues.value.queues).toEqual([
-      { name: "github-webhook", created: 0, retry: 0, active: 0, failed: 0 },
-      { name: "release-sync", created: 0, retry: 0, active: 0, failed: 0 },
+      {
+        name: "github-webhook",
+        created: 0,
+        retry: 0,
+        active: 0,
+        failed: 0,
+        oldestQueuedAt: null,
+      },
+      {
+        name: "release-sync",
+        created: 0,
+        retry: 0,
+        active: 0,
+        failed: 0,
+        oldestQueuedAt: null,
+      },
     ]);
   });
 
@@ -196,8 +213,33 @@ describe("queue backlog", () => {
     if (!health.queues.ok) return;
 
     expect(health.queues.value.queues).toEqual([
-      { name: "github-webhook", created: 2, retry: 1, active: 1, failed: 1 },
+      {
+        name: "github-webhook",
+        created: 2,
+        retry: 1,
+        active: 1,
+        failed: 1,
+        oldestQueuedAt: expect.any(String),
+      },
     ]);
+  });
+
+  test("warns when a created job has waited past the threshold", async () => {
+    const pool = getPool();
+    await pool.query(`insert into pgboss.queue (name) values ('github-webhook')`);
+    await pool.query(
+      `insert into pgboss.job (name, state, created_on)
+       values ('github-webhook', 'created', now() - interval '10 minutes')`,
+    );
+
+    const health = await loadSystemHealth();
+    expect(health.queues.ok).toBe(true);
+    if (!health.queues.ok) return;
+
+    expect(health.queues.value.queues[0]?.oldestQueuedAt).toEqual(expect.any(String));
+    const summary = summarizeHealth(health);
+    expect(summary.tone).toBe("warn");
+    expect(summary.text).toContain("worker 可能未运行");
   });
 
   test("no queue registry at all is an empty list", async () => {

@@ -107,6 +107,18 @@ export type DashboardBrand = {
   social: DashboardBrandSocial;
 };
 
+/**
+ * The last GitHub release sync attempt for the product's repository. This is the developer's
+ * answer to "did my new tag reach the store?": the catalog only shows published versions, so
+ * without this line a queued-but-unconsumed release looks identical to one that never existed.
+ */
+export type DashboardRepoSync = {
+  tag: string;
+  state: "synced" | "needs_attention" | "failed" | "syncing";
+  lastSyncedAt: string | null;
+  error: string | null;
+};
+
 export type DashboardProductDetail = DashboardProduct & {
   defaultLocale: string;
   summary: string;
@@ -123,6 +135,8 @@ export type DashboardProductDetail = DashboardProduct & {
   repoBoundAt: string | null;
   repoBoundVia: "installation" | "github_identity" | null;
   capabilitiesReviewed: string[];
+  /** Latest release sync for the bound repository; null while unbound or before any release. */
+  sync: DashboardRepoSync | null;
 };
 
 /**

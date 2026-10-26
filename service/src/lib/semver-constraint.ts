@@ -14,6 +14,12 @@ export type ConstraintGroup = {
   range: string;
   /** node-semver ranges that must NOT match, from `!=` comparators. */
   excluded: string[];
+  /**
+   * True when any comparator in this group names a prerelease. The host evaluates a
+   * prerelease core against a whole OR-group with prereleases enabled whenever that group
+   * mentions one, so the store has to reproduce the same switch (see `matchesGroup`).
+   */
+  mentionsPrerelease: boolean;
 };
 
 export type ParsedConstraint = {
@@ -25,6 +31,16 @@ export type ParsedConstraint = {
 /** Collapse `>= 1.0.0` to `>=1.0.0` so operator/version pairs survive tokenization. */
 function tightenOperators(value: string): string {
   return value.replace(/([<>=!~^]+)\s+/g, "$1").replace(/\s+/g, " ").trim();
+}
+
+/** Does this node-semver range name a prerelease anywhere in its comparators? */
+function mentionsPrerelease(range: string): boolean {
+  return new semver.Range(range).set.some((set) =>
+    set.some(
+      (comparator) =>
+        typeof comparator.semver === "object" && comparator.semver.prerelease.length > 0,
+    ),
+  );
 }
 
 function parseGroup(raw: string): ConstraintGroup | null {
@@ -45,7 +61,9 @@ function parseGroup(raw: string): ConstraintGroup | null {
 
   const range = comparators.length === 0 ? "*" : comparators.join(" ");
   if (semver.validRange(range) === null) return null;
-  return { range, excluded };
+  // A `!=` comparator that names a prerelease flips the group's mode just like a bound does.
+  const prerelease = [range, ...excluded].some(mentionsPrerelease);
+  return { range, excluded, mentionsPrerelease: prerelease };
 }
 
 /**
@@ -73,18 +91,40 @@ export function parseConstraint(
   return { groups, canonical };
 }
 
+/** `major.minor.patch` of a prerelease version; null when there is no prerelease. */
+function releaseBase(version: string): string | null {
+  const parsed = semver.parse(version);
+  if (parsed === null || parsed.prerelease.length === 0) return null;
+  return `${parsed.major}.${parsed.minor}.${parsed.patch}`;
+}
+
+function matchesGroup(group: ConstraintGroup, version: string): boolean {
+  // node-semver drops a prerelease whose `major.minor.patch` tuple differs from every
+  // prerelease comparator in the range; the host instead compares every comparator once the
+  // group mentions a prerelease at all. `includePrerelease` is that switch, and the `!=`
+  // exclusions ride the same mode so both halves of the group agree.
+  const options = { includePrerelease: group.mentionsPrerelease };
+  if (!semver.satisfies(version, group.range, options)) return false;
+  if (group.excluded.some((range) => semver.satisfies(version, range, options))) return false;
+  return true;
+}
+
+function matchesGroups(parsed: ParsedConstraint, version: string): boolean {
+  return parsed.groups.some((group) => matchesGroup(group, version));
+}
+
 export function constraintMatches(
   parsed: ParsedConstraint,
   version: string,
 ): boolean {
   const normalized = semver.valid(version);
   if (normalized === null) return false;
-  for (const group of parsed.groups) {
-    if (!semver.satisfies(normalized, group.range)) continue;
-    if (group.excluded.some((range) => semver.satisfies(normalized, range))) continue;
-    return true;
-  }
-  return false;
+  if (matchesGroups(parsed, normalized)) return true;
+  // The host retries a prerelease core against its release baseline when the direct
+  // evaluation fails (`CheckSForumVersion` -> `releaseBase`), so `3.0.13-alpha.2` still
+  // matches `>=3.0.12`. Without the retry the store hides packages core would install.
+  const base = releaseBase(normalized);
+  return base !== null && matchesGroups(parsed, base);
 }
 
 export function satisfiesConstraint(

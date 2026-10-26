@@ -14,9 +14,11 @@ import {
   releaseAssets,
   releaseVersions,
   repoClaims,
+  repoReleases,
   webhookDeliveries,
 } from "@/db/schema";
 import { TRUNCATE_ALL } from "@/lib/test-support/db";
+import { ZipDetectionError } from "@/lib/detection/zip";
 import {
   elfHeader,
   makeZip,
@@ -24,8 +26,9 @@ import {
   themeManifest,
 } from "../../../test/zip-fixture";
 import type { GithubRelease, GithubReleaseAsset } from "./client";
+import { AssetFetchError } from "./assets";
 import { markWebhookDelivery, recordWebhookDelivery } from "./deliveries";
-import { syncRelease, type AssetFetcher } from "./sync";
+import { syncRelease, isRetryableFailure, type AssetFetcher } from "./sync";
 import { verifyGithubSignature } from "./webhook";
 
 const TEST_DATABASE_URL =
@@ -122,6 +125,35 @@ describe("GitHub webhook", () => {
       .where(eq(webhookDeliveries.deliveryId, input.deliveryId));
     expect(row?.status).toBe("processed");
     expect(row?.processedAt).not.toBeNull();
+  });
+
+  test("a delivery that fails once and then succeeds ends up processed", async () => {
+    // The worker marks `failed` and rethrows on every attempt; pg-boss retries the same job,
+    // so the same delivery row is written twice. The second write has to clear the first.
+    const deliveryId = "delivery-retry-1";
+    expect(
+      await recordWebhookDelivery(db, {
+        deliveryId,
+        event: "release",
+        action: "published",
+        payload: { action: "published" },
+      }),
+    ).toBe(true);
+
+    await markWebhookDelivery(
+      db,
+      deliveryId,
+      "failed",
+      "asset_fetch_failed (503): asset download failed: 503",
+    );
+    await markWebhookDelivery(db, deliveryId, "processed");
+
+    const [row] = await db
+      .select()
+      .from(webhookDeliveries)
+      .where(eq(webhookDeliveries.deliveryId, deliveryId));
+    expect(row?.status).toBe("processed");
+    expect(row?.error).toBeNull();
   });
 });
 
@@ -395,6 +427,617 @@ describe("release sync", () => {
       true,
     );
     expect(result.versions).toBe(0);
+  });
+
+  // §10 Q3: a tag carries N extensions, so one broken package must not decide the fate of
+  // the others. `release_versions.state` follows the extension's own issues; the release row
+  // keeps reporting the whole tag.
+  describe("issue attribution", () => {
+    const sha = (data: Buffer) => createHash("sha256").update(data).digest("hex");
+
+    async function versionRowFor(repoReleaseId: string, productId: string) {
+      const rows = await db
+        .select()
+        .from(releaseVersions)
+        .where(eq(releaseVersions.repoReleaseId, repoReleaseId));
+      return rows.find((row) => row.productId === productId);
+    }
+
+    test("isolates a digest mismatch to the extension that shipped it", async () => {
+      const isoA = "sforum.iso-a";
+      const isoB = "sforum.iso-b";
+      const aId = await ensureProduct({ extensionId: isoA, name: "Iso A" });
+      const bId = await ensureProduct({
+        extensionId: isoB,
+        name: "Iso B",
+        kind: "theme",
+      });
+
+      const aAmd64 = await makeZip({
+        "sforum.extension.json": JSON.stringify({ ...pluginManifest, id: isoA }),
+        "backend/plugin": elfHeader(0x3e),
+      });
+      const aArm64 = await makeZip({
+        "sforum.extension.json": JSON.stringify({ ...pluginManifest, id: isoA }),
+        "backend/plugin": elfHeader(0xb7),
+      });
+      const bTheme = await makeZip({
+        "sforum.extension.json": JSON.stringify({ ...themeManifest, id: isoB }),
+      });
+
+      // The classic case: one platform was rebuilt, `checksums.txt` was not refreshed.
+      const sums = Buffer.from(
+        [
+          `${sha(aAmd64)}  iso-a-linux-amd64.zip`,
+          `${"0".repeat(64)}  iso-a-linux-arm64.zip`,
+          `${sha(bTheme)}  iso-b-any.zip`,
+        ].join("\n") + "\n",
+      );
+      fixtures.set("checksums.txt", sums);
+      fixtures.set("iso-a-linux-amd64.zip", aAmd64);
+      fixtures.set("iso-a-linux-arm64.zip", aArm64);
+      fixtures.set("iso-b-any.zip", bTheme);
+
+      const result = await syncRelease({
+        db,
+        repoId: REPO,
+        release: release(30, "v2.0.0", [
+          asset(300, "checksums.txt", sums),
+          asset(301, "iso-a-linux-amd64.zip", aAmd64),
+          asset(302, "iso-a-linux-arm64.zip", aArm64),
+          asset(303, "iso-b-any.zip", bTheme),
+        ]),
+        fetchAsset,
+      });
+
+      // A's arm64 build is still rejected — attribution only decides who gets held.
+      expect(result.assets).toBe(2);
+      expect(result.issues.map((issue) => issue.code)).toEqual([
+        "digest_mismatch",
+      ]);
+
+      expect((await versionRowFor(result.repoReleaseId, aId))?.state).toBe(
+        "needs_attention",
+      );
+      expect((await versionRowFor(result.repoReleaseId, bId))?.state).toBe(
+        "pending_review",
+      );
+
+      // The tag itself is still flagged: someone has to look at the broken asset.
+      const [releaseRow] = await db
+        .select()
+        .from(repoReleases)
+        .where(eq(repoReleases.id, result.repoReleaseId));
+      expect(releaseRow?.syncState).toBe("needs_attention");
+      expect(releaseRow?.syncError).toContain("digest_mismatch");
+    });
+
+    test("holds the whole tag when a broken asset cannot be attributed", async () => {
+      const isoC = "sforum.iso-c";
+      const isoD = "sforum.iso-d";
+      await ensureProduct({ extensionId: isoC, name: "Iso C" });
+      const dId = await ensureProduct({
+        extensionId: isoD,
+        name: "Iso D",
+        kind: "theme",
+      });
+
+      // Neither archive yields a manifest id: one is unreadable garbage that also fails its
+      // checksum, the other is garbage with no checksum entry at all (`asset_failed`).
+      const corrupt = Buffer.from("this is not a zip archive");
+      const unparseable = Buffer.from("neither is this one");
+      const dTheme = await makeZip({
+        "sforum.extension.json": JSON.stringify({ ...themeManifest, id: isoD }),
+      });
+      const sums = Buffer.from(`${"0".repeat(64)}  iso-c-broken.zip\n`);
+      fixtures.set("checksums.txt", sums);
+      fixtures.set("iso-c-broken.zip", corrupt);
+      fixtures.set("iso-e-broken.zip", unparseable);
+      fixtures.set("iso-d-any.zip", dTheme);
+
+      const result = await syncRelease({
+        db,
+        repoId: REPO,
+        release: release(31, "v2.1.0", [
+          asset(310, "checksums.txt", sums),
+          asset(311, "iso-c-broken.zip", corrupt),
+          asset(312, "iso-e-broken.zip", unparseable),
+          asset(313, "iso-d-any.zip", dTheme),
+        ]),
+        fetchAsset,
+      });
+
+      // Both failures stay in the flat log, unattributed.
+      expect(result.issues.map((issue) => issue.detail).sort()).toEqual([
+        "iso-c-broken.zip",
+        "iso-e-broken.zip",
+      ]);
+      expect(result.issues[0]?.code).toBe("digest_mismatch");
+
+      // Documented fallback: an unattributable issue holds every version in the release,
+      // because we cannot prove the innocent-looking sibling shipped complete bytes.
+      expect((await versionRowFor(result.repoReleaseId, dId))?.state).toBe(
+        "needs_attention",
+      );
+    });
+
+    test("does not let an unclaimed extension hold a bound one in the same tag", async () => {
+      const isoF = "sforum.iso-f";
+      const stranger = "sforum.iso-stranger";
+      const fId = await ensureProduct({ extensionId: isoF, name: "Iso F" });
+
+      const fZip = await makeZip({
+        "sforum.extension.json": JSON.stringify({ ...pluginManifest, id: isoF }),
+        "backend/plugin": elfHeader(),
+      });
+      const strangerZip = await makeZip({
+        "sforum.extension.json": JSON.stringify({
+          ...pluginManifest,
+          id: stranger,
+        }),
+        "backend/plugin": elfHeader(),
+      });
+      fixtures.set("iso-f-linux-amd64.zip", fZip);
+      fixtures.set("iso-stranger-linux-amd64.zip", strangerZip);
+
+      const result = await syncRelease({
+        db,
+        repoId: REPO,
+        installationId: 77,
+        release: release(32, "v2.2.0", [
+          // The unclaimed package comes first on purpose: group order is asset order, so
+          // this is the arrangement where a shared issue list used to leak into F.
+          asset(320, "iso-stranger-linux-amd64.zip", strangerZip),
+          asset(321, "iso-f-linux-amd64.zip", fZip),
+        ]),
+        fetchAsset,
+      });
+
+      expect(result.issues.map((issue) => issue.code)).toEqual([
+        "product_unclaimed",
+      ]);
+      const claims = await db
+        .select()
+        .from(repoClaims)
+        .where(eq(repoClaims.extensionId, stranger));
+      expect(claims).toHaveLength(1);
+
+      // The unclaimed id produces no version row, and its issue does not reach F.
+      expect((await versionRowFor(result.repoReleaseId, fId))?.state).toBe(
+        "pending_review",
+      );
+      const [releaseRow] = await db
+        .select()
+        .from(repoReleases)
+        .where(eq(repoReleases.id, result.repoReleaseId));
+      expect(releaseRow?.syncState).toBe("needs_attention");
+    });
+  });
+
+  // A transient GitHub failure must not reach the version rows: `needs_attention` is terminal,
+  // so the old behaviour (record `asset_failed`, hold the tag) burned version numbers on a 500.
+  describe("transient failures", () => {
+    async function releaseRowFor(githubReleaseId: number) {
+      const [row] = await db
+        .select()
+        .from(repoReleases)
+        .where(
+          and(
+            eq(repoReleases.repoId, REPO),
+            eq(repoReleases.githubReleaseId, githubReleaseId),
+          ),
+        );
+      return row;
+    }
+
+    test("aborts on a retryable failure instead of burning the tag", async () => {
+      const id = "sforum.retry-a";
+      await ensureProduct({ extensionId: id, name: "Retry A" });
+      const zip = await makeZip({
+        "sforum.extension.json": JSON.stringify({ ...pluginManifest, id }),
+        "backend/plugin": elfHeader(),
+      });
+
+      await expect(
+        syncRelease({
+          db,
+          repoId: REPO,
+          release: release(50, "v3.0.0", [
+            asset(500, "retry-a-linux-amd64.zip", zip),
+          ]),
+          fetchAsset: async () => {
+            throw new AssetFetchError("asset download failed: 503", {
+              retryable: true,
+              status: 503,
+            });
+          },
+        }),
+      ).rejects.toThrow("503");
+
+      // The row must not be left `syncing`: that is indistinguishable from a sync in flight.
+      const row = await releaseRowFor(50);
+      expect(row?.syncState).toBe("failed");
+      expect(row?.syncError).toContain("asset_fetch_failed");
+      expect(row?.syncError).toContain("503");
+
+      // Nothing was written, so the retry starts from a clean release.
+      const versions = await db
+        .select()
+        .from(releaseVersions)
+        .where(eq(releaseVersions.repoReleaseId, row!.id));
+      expect(versions).toHaveLength(0);
+    });
+
+    test("records a non-retryable failure instead of retrying it", async () => {
+      const id = "sforum.gone-a";
+      const productId = await ensureProduct({ extensionId: id, name: "Gone A" });
+      const zip = await makeZip({
+        "sforum.extension.json": JSON.stringify({ ...pluginManifest, id }),
+        "backend/plugin": elfHeader(0x3e),
+      });
+      fixtures.set("gone-a-linux-amd64.zip", zip);
+
+      const result = await syncRelease({
+        db,
+        repoId: REPO,
+        release: release(51, "v3.1.0", [
+          asset(510, "gone-a-linux-arm64.zip", Buffer.from("never fetched")),
+          asset(511, "gone-a-linux-amd64.zip", zip),
+        ]),
+        fetchAsset: async (item) => {
+          if (item.name === "gone-a-linux-arm64.zip") {
+            throw new AssetFetchError("asset download failed: 404", {
+              retryable: false,
+              status: 404,
+            });
+          }
+          return fetchAsset(item);
+        },
+      });
+
+      // A 404 is a verdict: the asset is gone, so the retry would read the same answer.
+      expect(result.issues.map((issue) => issue.code)).toEqual(["asset_failed"]);
+      const row = await releaseRowFor(51);
+      expect(row?.syncState).toBe("needs_attention");
+      expect(row?.syncError).toContain("asset_failed");
+
+      // The surviving platform still produced a row, and it is held.
+      const [version] = await db
+        .select()
+        .from(releaseVersions)
+        .where(
+          and(
+            eq(releaseVersions.productId, productId),
+            eq(releaseVersions.version, "1.4.2"),
+          ),
+        );
+      expect(version?.state).toBe("needs_attention");
+    });
+  });
+
+  // §Q4: a published version whose bytes changed must be reported even when the same tag also
+  // carries another version of the same extension — the group-level early return used to
+  // swallow it.
+  test("reports a version conflict even when the group's manifests disagree", async () => {
+    const id = "sforum.split";
+    const productId = await ensureProduct({ extensionId: id, name: "Split" });
+    await db
+      .update(products)
+      .set({
+        status: "published",
+        repoId: REPO,
+        nameAtReview: "Split",
+        repoIdReviewed: REPO,
+        capabilitiesReviewed: ["host.api"],
+        publishedAt: new Date(),
+      })
+      .where(eq(products.id, productId));
+
+    const v100 = await makeZip({
+      "sforum.extension.json": JSON.stringify({
+        ...pluginManifest,
+        id,
+        name: "Split",
+        version: "1.0.0",
+      }),
+      "backend/plugin": elfHeader(),
+    });
+    fixtures.set("split-1.0.0-linux-amd64.zip", v100);
+    await syncRelease({
+      db,
+      repoId: REPO,
+      release: release(52, "v4.0.0", [
+        asset(520, "split-1.0.0-linux-amd64.zip", v100),
+      ]),
+      fetchAsset,
+    });
+
+    const [published] = await db
+      .select()
+      .from(releaseVersions)
+      .where(
+        and(
+          eq(releaseVersions.productId, productId),
+          eq(releaseVersions.version, "1.0.0"),
+        ),
+      );
+    expect(published?.state).toBe("published");
+    const before = await db
+      .select()
+      .from(releaseAssets)
+      .where(eq(releaseAssets.releaseVersionId, published!.id));
+    expect(before).toHaveLength(1);
+
+    // The same tag now claims two versions of one extension, and the 1.0.0 package differs
+    // from the one already published.
+    const v100changed = await makeZip({
+      "sforum.extension.json": JSON.stringify({
+        ...pluginManifest,
+        id,
+        name: "Split",
+        version: "1.0.0",
+      }),
+      "backend/plugin": Buffer.concat([elfHeader(), Buffer.from("changed")]),
+    });
+    const v110 = await makeZip({
+      "sforum.extension.json": JSON.stringify({
+        ...pluginManifest,
+        id,
+        name: "Split",
+        version: "1.1.0",
+      }),
+      "backend/plugin": elfHeader(),
+    });
+    fixtures.set("split-1.0.0-linux-amd64.zip", v100changed);
+    fixtures.set("split-1.1.0-linux-amd64.zip", v110);
+
+    const result = await syncRelease({
+      db,
+      repoId: REPO,
+      release: release(53, "v4.0.0-split", [
+        asset(530, "split-1.0.0-linux-amd64.zip", v100changed),
+        asset(531, "split-1.1.0-linux-amd64.zip", v110),
+      ]),
+      fetchAsset,
+    });
+
+    expect(result.issues.map((issue) => issue.code).sort()).toEqual([
+      "manifest_mismatch",
+      "version_conflict",
+    ]);
+    const row = await db
+      .select()
+      .from(repoReleases)
+      .where(eq(repoReleases.id, result.repoReleaseId));
+    expect(row[0]?.syncError).toContain("manifest_mismatch");
+    expect(row[0]?.syncError).toContain("version_conflict");
+
+    // Report only: the published version keeps its state and its bytes.
+    const [after] = await db
+      .select()
+      .from(releaseVersions)
+      .where(eq(releaseVersions.id, published!.id));
+    expect(after?.state).toBe("published");
+    const afterAssets = await db
+      .select()
+      .from(releaseAssets)
+      .where(eq(releaseAssets.releaseVersionId, published!.id));
+    expect(afterAssets.map((item) => item.sha256)).toEqual([
+      before[0]!.sha256,
+    ]);
+  });
+
+  // A retry after a partial write used to be the trap: the version row survived, the asset
+  // rows did not, and the retry read that as a digest change — the very `needs_attention`
+  // this path exists to avoid.
+  test("rolls the version row back when the asset insert fails", async () => {
+    const id = "sforum.atomic";
+    const productId = await ensureProduct({ extensionId: id, name: "Atomic" });
+    await db
+      .update(products)
+      .set({
+        status: "published",
+        repoId: REPO,
+        nameAtReview: "Atomic",
+        repoIdReviewed: REPO,
+        capabilitiesReviewed: ["host.api"],
+        publishedAt: new Date(),
+      })
+      .where(eq(products.id, productId));
+
+    const zip = await makeZip({
+      "sforum.extension.json": JSON.stringify({
+        ...pluginManifest,
+        id,
+        name: "Atomic",
+      }),
+      "backend/plugin": elfHeader(),
+    });
+    fixtures.set("atomic-linux-amd64.zip", zip);
+
+    const eventsBefore = await db.select().from(moderationEvents);
+
+    // `release_assets.size` is a bigint column, so this overflows it *after* the version row
+    // and its moderation event have been written and before the asset row lands.
+    await expect(
+      syncRelease({
+        db,
+        repoId: REPO,
+        release: release(60, "v5.0.0", [
+          asset(600, "atomic-linux-amd64.zip", zip),
+        ]),
+        fetchAsset: async (item) => ({
+          ...(await fetchAsset(item)),
+          size: 2 ** 63,
+        }),
+      }),
+    ).rejects.toThrow();
+
+    const leftovers = await db
+      .select()
+      .from(releaseVersions)
+      .where(
+        and(
+          eq(releaseVersions.productId, productId),
+          eq(releaseVersions.version, "1.4.2"),
+        ),
+      );
+    expect(leftovers).toHaveLength(0);
+    expect(await db.select().from(moderationEvents)).toHaveLength(
+      eventsBefore.length,
+    );
+
+    // The retry is a clean insert, not a conflict, and it publishes.
+    const result = await syncRelease({
+      db,
+      repoId: REPO,
+      release: release(60, "v5.0.0", [
+        asset(600, "atomic-linux-amd64.zip", zip),
+      ]),
+      fetchAsset,
+    });
+    expect(result.issues).toEqual([]);
+    const [row] = await db
+      .select()
+      .from(releaseVersions)
+      .where(eq(releaseVersions.repoReleaseId, result.repoReleaseId));
+    expect(row?.state).toBe("published");
+  });
+
+  test("aborts when the archive cannot be read from local disk", async () => {
+    const id = "sforum.io-a";
+    await ensureProduct({ extensionId: id, name: "IO A" });
+    const missing = join(tmpdir(), `sforum-missing-${Date.now()}`, "asset.zip");
+
+    // The bytes never reach the parser: this is the worker's disk failing, not a bad package.
+    await expect(
+      syncRelease({
+        db,
+        repoId: REPO,
+        release: release(61, "v6.0.0", [
+          asset(610, "io-a-linux-amd64.zip", Buffer.from("never read")),
+        ]),
+        fetchAsset: async () => ({
+          path: missing,
+          sha256: "0".repeat(64),
+          size: 10,
+          cleanup: async () => {},
+        }),
+      }),
+    ).rejects.toThrow();
+
+    const [row] = await db
+      .select()
+      .from(repoReleases)
+      .where(
+        and(
+          eq(repoReleases.repoId, REPO),
+          eq(repoReleases.githubReleaseId, 61),
+        ),
+      );
+    expect(row?.syncState).toBe("failed");
+    expect(row?.syncError).toContain("ENOENT");
+    const versions = await db
+      .select()
+      .from(releaseVersions)
+      .where(eq(releaseVersions.repoReleaseId, row!.id));
+    expect(versions).toHaveLength(0);
+  });
+
+  // The webhook is at-least-once, so two jobs can run the same release. The loser's failure
+  // writeback must not land on top of a `synced` the winner already committed.
+  test("a losing attempt does not overwrite a finished sync", async () => {
+    const id = "sforum.race";
+    await ensureProduct({ extensionId: id, name: "Race" });
+    const zip = await makeZip({
+      "sforum.extension.json": JSON.stringify({
+        ...pluginManifest,
+        id,
+        name: "Race",
+      }),
+      "backend/plugin": elfHeader(),
+    });
+    fixtures.set("race-linux-amd64.zip", zip);
+
+    let openGate: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      openGate = resolve;
+    });
+    let loserReachedAssets: () => void = () => {};
+    const reached = new Promise<void>((resolve) => {
+      loserReachedAssets = resolve;
+    });
+
+    // The loser commits `syncing` in its upsert and then blocks in the asset stage, so the
+    // winner below is guaranteed to run against a row that is already `syncing`.
+    const loser = syncRelease({
+      db,
+      repoId: REPO,
+      release: release(70, "v7.0.0", [
+        asset(700, "race-linux-amd64.zip", zip),
+      ]),
+      fetchAsset: async () => {
+        loserReachedAssets();
+        await gate;
+        throw new AssetFetchError("asset download failed: 503", {
+          retryable: true,
+          status: 503,
+        });
+      },
+    });
+    loser.catch(() => {});
+
+    await reached;
+    await syncRelease({
+      db,
+      repoId: REPO,
+      release: release(70, "v7.0.0", [
+        asset(700, "race-linux-amd64.zip", zip),
+      ]),
+      fetchAsset,
+    });
+
+    // The winner is done; only now does the loser's failure writeback run.
+    openGate();
+    await expect(loser).rejects.toThrow("503");
+
+    const [row] = await db
+      .select()
+      .from(repoReleases)
+      .where(
+        and(
+          eq(repoReleases.repoId, REPO),
+          eq(repoReleases.githubReleaseId, 70),
+        ),
+      );
+    expect(row?.syncState).toBe("synced");
+  });
+});
+
+describe("isRetryableFailure", () => {
+  test("separates transport and disk hiccups from verdicts about the package", () => {
+    expect(
+      isRetryableFailure(
+        new AssetFetchError("503", { retryable: true, status: 503 }),
+      ),
+    ).toBe(true);
+    expect(
+      isRetryableFailure(
+        new AssetFetchError("404", { retryable: false, status: 404 }),
+      ),
+    ).toBe(false);
+
+    for (const code of ["EIO", "EMFILE", "ENOSPC", "ENOENT"]) {
+      expect(isRetryableFailure(Object.assign(new Error(code), { code }))).toBe(
+        true,
+      );
+    }
+
+    // A package we could read and judge stays a verdict.
+    expect(isRetryableFailure(new ZipDetectionError("manifest_missing"))).toBe(
+      false,
+    );
+    expect(isRetryableFailure(new Error("boom"))).toBe(false);
   });
 });
 

@@ -9,6 +9,7 @@ import {
   productReadmes,
   productTranslations,
   products,
+  repoReleases,
 } from "@/db/schema";
 import { TRUNCATE_ALL } from "@/lib/test-support/db";
 import {
@@ -548,6 +549,42 @@ describe("readme", () => {
       productId: detail.id,
     });
     expect(read.readme).toBeNull();
+  });
+});
+
+describe("repository sync status", () => {
+  const REPO = 5_151;
+
+  test("returns the latest release sync for a bound repository", async () => {
+    const detail = await makeProduct(ownerId, { extensionId: "sforum.sync" });
+    await db.update(products).set({ repoId: REPO }).where(eq(products.id, detail.id));
+    await db.insert(repoReleases).values({
+      repoId: REPO,
+      githubReleaseId: 9_100,
+      tag: "v1.0.3",
+      syncState: "synced",
+      lastSyncedAt: new Date("2026-10-25T22:31:54Z"),
+    });
+
+    const read = await getDashboardProduct(db, {
+      accountId: ownerId,
+      productId: detail.id,
+    });
+    expect(read.sync).toEqual({
+      tag: "v1.0.3",
+      state: "synced",
+      lastSyncedAt: "2026-10-25T22:31:54.000Z",
+      error: null,
+    });
+  });
+
+  test("an unbound product has no sync row", async () => {
+    const detail = await makeProduct(ownerId, { extensionId: "sforum.unbound" });
+    const read = await getDashboardProduct(db, {
+      accountId: ownerId,
+      productId: detail.id,
+    });
+    expect(read.sync).toBeNull();
   });
 });
 

@@ -1,5 +1,6 @@
 import { AppShell } from "@/components/shell/app-shell";
 import { ConsoleNav } from "@/components/shell/console-nav";
+import { SyncAlert } from "@/components/dashboard/sync-alert";
 
 /**
  * Frame for the developer portal and the moderation console. It is the storefront frame
@@ -25,6 +26,7 @@ export function ConsoleShell({
       topbarStart={<span className="eyebrow hidden lg:block">{label}</span>}
       mainClassName="min-w-0"
     >
+      <SyncAlert />
       {children}
     </AppShell>
   );

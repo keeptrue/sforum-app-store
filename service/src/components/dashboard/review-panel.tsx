@@ -13,6 +13,8 @@ import {
   STATUS_HINTS,
   STATUS_LABELS,
   STATUS_TONES,
+  SYNC_STATE_LABELS,
+  SYNC_STATE_TONES,
   VERSION_STATE_LABELS,
   VERSION_STATE_TONES,
   formatDateTime,
@@ -64,6 +66,23 @@ export function ReviewPanel({ product }: { product: DashboardProductDetail }) {
           <Field label="首次发布">
             {product.publishedAt ? formatDateTime(product.publishedAt) : "尚未发布"}
           </Field>
+          <Field label="最近同步">
+            {product.sync === null ? (
+              <span className="text-muted-foreground">还没有 release</span>
+            ) : (
+              <span className="flex flex-wrap items-center gap-1.5">
+                <span className="font-mono">{product.sync.tag}</span>
+                <span>
+                  {product.sync.lastSyncedAt
+                    ? formatDateTime(product.sync.lastSyncedAt)
+                    : "尚未完成"}
+                </span>
+                <Badge variant={SYNC_STATE_TONES[product.sync.state]}>
+                  {SYNC_STATE_LABELS[product.sync.state]}
+                </Badge>
+              </span>
+            )}
+          </Field>
           <Field label="审核快照 · 名称">
             {product.nameAtReview ?? "—（未审核过）"}
           </Field>
@@ -94,6 +113,15 @@ export function ReviewPanel({ product }: { product: DashboardProductDetail }) {
             )}
           </Field>
         </dl>
+
+        {product.sync?.error ? (
+          <div className="rounded-md border border-warning/30 bg-warning/5 px-2.5 py-2">
+            <div className="text-[12.5px] font-medium text-warning">最近一次同步问题</div>
+            <p className="mt-1 text-[13px] leading-relaxed break-words text-foreground">
+              {product.sync.error}
+            </p>
+          </div>
+        ) : null}
 
         <div className="grid gap-2 border-t border-border pt-3">
           <span className="text-xs font-medium">可审版本</span>

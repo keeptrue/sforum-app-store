@@ -5,6 +5,7 @@
     "dev": "next dev -p 4000",
     "build": "bun --bun next build",
     "start": "bun --bun next start -p 4000",
+    "worker": "bun --env-file=.env.local src/worker.ts",
     "contract:generate": "openapi-typescript ../contracts/store-api.yaml -o src/lib/api-types.ts",
     "manifest:sync": "bun scripts/sync-manifest-schema.ts",
     "manifest:check": "bun scripts/sync-manifest-schema.ts --check",

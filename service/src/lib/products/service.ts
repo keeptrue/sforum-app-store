@@ -15,6 +15,7 @@ import { recordAudit, recordModerationEvent } from "@/lib/moderation/events";
 import {
   delistProduct as delistProductRow,
   findAssetBySha256,
+  findLatestRepoSync,
   findOwnedProduct,
   findProductIdByExtensionId,
   findProductIdBySlug,
@@ -34,6 +35,7 @@ import {
   type DbExecutor,
   type ProductRow,
   type ReadmeRow,
+  type RepoSyncRow,
   type TranslationRow,
 } from "./store";
 import { EMPTY_VERSION_SUMMARY, listProductVersionSummaries } from "./summary";
@@ -42,6 +44,7 @@ import type {
   DashboardProduct,
   DashboardProductDetail,
   DashboardReadme,
+  DashboardRepoSync,
   ProductKind,
   ProductPatch,
 } from "./types";
@@ -499,6 +502,25 @@ function toDashboardBrand(product: ProductRow): DashboardBrand {
   };
 }
 
+function toDashboardSync(row: RepoSyncRow | null): DashboardRepoSync | null {
+  if (row === null) return null;
+  // The column is free text in Postgres; keep the DTO a closed union so a future worker
+  // state cannot leak an unlabelled string into the dashboard.
+  const state: DashboardRepoSync["state"] =
+    row.state === "synced" ||
+    row.state === "needs_attention" ||
+    row.state === "failed" ||
+    row.state === "syncing"
+      ? row.state
+      : "syncing";
+  return {
+    tag: row.tag,
+    state,
+    lastSyncedAt: row.lastSyncedAt?.toISOString() ?? null,
+    error: row.error,
+  };
+}
+
 function toDetail(input: {
   product: Parameters<typeof toDashboardProduct>[0];
   previewSha256: string | null;
@@ -507,6 +529,7 @@ function toDetail(input: {
   readme: DashboardReadme | null;
   versions: Awaited<ReturnType<typeof listVersionRowsForProduct>>;
   reviewReason: string | null;
+  repoSync: RepoSyncRow | null;
 }): DashboardProductDetail {
   const base = toDashboardProduct(input.product, input.previewSha256, input.reviewReason);
   return {
@@ -539,6 +562,7 @@ function toDetail(input: {
     repoBoundAt: input.product.repoBoundAt?.toISOString() ?? null,
     repoBoundVia: input.product.repoBoundVia ?? null,
     capabilitiesReviewed: input.product.capabilitiesReviewed,
+    sync: toDashboardSync(input.repoSync),
   };
 }
 
@@ -612,13 +636,15 @@ export async function getDashboardProduct(
     input.productId,
     input.accountId,
   );
-  const [translation, readme, repoFullName, versions, reasons] = await Promise.all([
-    findTranslation(db, product.id, product.defaultLocale),
-    getProductReadme(db, product.id),
-    product.repoId === null ? null : findRepoFullName(db, product.repoId),
-    listVersionRowsForProduct(db, product.id),
-    listLatestRejectionReasons(db, [product.id]),
-  ]);
+  const [translation, readme, repoFullName, versions, reasons, repoSync] =
+    await Promise.all([
+      findTranslation(db, product.id, product.defaultLocale),
+      getProductReadme(db, product.id),
+      product.repoId === null ? null : findRepoFullName(db, product.repoId),
+      listVersionRowsForProduct(db, product.id),
+      listLatestRejectionReasons(db, [product.id]),
+      product.repoId === null ? null : findLatestRepoSync(db, product.repoId),
+    ]);
   return toDetail({
     product,
     previewSha256,
@@ -632,6 +658,7 @@ export async function getDashboardProduct(
         : null,
     versions,
     reviewReason: reasons.get(product.id) ?? null,
+    repoSync,
   });
 }
 

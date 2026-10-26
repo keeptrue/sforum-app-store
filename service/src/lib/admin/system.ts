@@ -4,6 +4,7 @@ import { getGithubAppView } from "@/lib/github/app-config";
 import { windowStartFor } from "@/lib/ratelimit/limiter";
 import type { RateLimitRule } from "@/lib/ratelimit/rules";
 import { getRuntimeConfig } from "@/lib/settings/runtime";
+import { SYNC_STALE_AFTER_MS } from "@/lib/ops/sync-health";
 
 /**
  * Read-only health probes for the admin console.
@@ -33,6 +34,8 @@ export type QueueHealthRow = {
   retry: number;
   active: number;
   failed: number;
+  /** Age of the oldest job that is still waiting for a worker; null when none is queued. */
+  oldestQueuedAt: string | null;
 };
 
 export type QueuesHealth = { queues: QueueHealthRow[] };
@@ -212,7 +215,8 @@ const QUEUES_SQL = `
     count(j.id) filter (where j.state = 'created')::int as created,
     count(j.id) filter (where j.state = 'retry')::int as retry,
     count(j.id) filter (where j.state = 'active')::int as active,
-    count(j.id) filter (where j.state = 'failed')::int as failed
+    count(j.id) filter (where j.state = 'failed')::int as failed,
+    min(j.created_on) filter (where j.state = 'created') as oldest_queued_at
   from names n
   left join pgboss.job j
     on j.name = n.name
@@ -223,8 +227,12 @@ const QUEUES_SQL = `
   order by n.name
 `;
 
+type QueueSqlRow = Omit<QueueHealthRow, "oldestQueuedAt"> & {
+  oldest_queued_at: Date | string | null;
+};
+
 async function loadQueues(): Promise<QueuesHealth> {
-  const { rows } = await getPool().query<QueueHealthRow>(QUEUES_SQL);
+  const { rows } = await getPool().query<QueueSqlRow>(QUEUES_SQL);
   return {
     queues: rows.map((row) => ({
       name: row.name,
@@ -232,6 +240,9 @@ async function loadQueues(): Promise<QueuesHealth> {
       retry: Number(row.retry),
       active: Number(row.active),
       failed: Number(row.failed),
+      oldestQueuedAt: row.oldest_queued_at
+        ? new Date(row.oldest_queued_at).toISOString()
+        : null,
     })),
   };
 }
@@ -515,6 +526,25 @@ export function summarizeHealth(health: SystemHealth): HealthSummary {
     const failed = queues.reduce((sum, q) => sum + q.failed, 0);
     if (failed > 0) warn(`${failed} 个 job 失败`);
     if (backlog > 0) warn(`${backlog} 个 job 待处理`);
+
+    // A backlog is not proof of a dead worker: a long release sync leaves later jobs
+    // waiting behind it. Only a `created` job older than the threshold, with nothing
+    // active, means no consumer is picking work up.
+    const stalled = queues.filter((queue) => {
+      if (queue.active > 0 || queue.oldestQueuedAt === null) return false;
+      return (
+        Date.parse(health.generatedAt) - Date.parse(queue.oldestQueuedAt) >
+        SYNC_STALE_AFTER_MS
+      );
+    });
+    if (stalled.length > 0) {
+      warn(
+        `${stalled.map((queue) => queue.name).join("、")} 有 job 排队超过 ${Math.round(
+          SYNC_STALE_AFTER_MS / 60_000,
+        )} 分钟，worker 可能未运行`,
+      );
+    }
+
     if (failed === 0 && backlog === 0) parts.push(`${queues.length} 个队列无积压`);
   }
 

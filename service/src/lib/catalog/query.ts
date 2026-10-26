@@ -19,7 +19,9 @@ import type { Db } from "@/db/client";
 import {
   accounts,
   assets,
+  githubInstallations,
   githubRepos,
+  oauthIssuers,
   productReadmes,
   productTranslations,
   products,
@@ -32,12 +34,14 @@ import {
   compareVersionsDesc,
   constraintMatches,
   effectiveHostVersion,
+  isDevBuild,
   maxVersion,
   parseConstraint,
   type HostVersion,
   type ParsedConstraint,
 } from "@/lib/catalog/compat";
 import { decodeCursor, encodeCursor, type CatalogCursor } from "@/lib/catalog/cursor";
+import { releaseNotesHtml } from "@/lib/readme/notes";
 import { assetUrl } from "@/lib/storage/urls";
 
 export type ProductSummary = components["schemas"]["ProductSummary"];
@@ -66,6 +70,12 @@ export type CatalogQuery = {
   sforumBuild: string | null;
   os: string | null;
   arch: string | null;
+  /**
+   * Architecture axis of the *list* filter. `strict` (the default) hides products that no
+   * candidate release supports on this host; `all` keeps them so the client can badge them
+   * instead. It never changes how `compatibility` is computed — see `buildSummary`.
+   */
+  platform: "strict" | "all";
   compat: "compatible" | "all";
   q: string | null;
   category: string | null;
@@ -91,11 +101,19 @@ export function parseCatalogQuery(searchParams: URLSearchParams): CatalogQueryRe
     return { ok: false, code: "invalid_query" };
   }
 
+  // Host identity is parsed first: it decides the default `compat` mode below.
+  const sforum = cleaned(searchParams.get("sforum"));
+  const sforumBuild = cleaned(searchParams.get("sforumBuild"));
+
   const compatParam = cleaned(searchParams.get("compat"));
   if (compatParam !== null && compatParam !== "compatible" && compatParam !== "all") {
     return { ok: false, code: "invalid_query" };
   }
-  const compat: "compatible" | "all" = compatParam ?? "compatible";
+  // A dev build only knows an approximate core version, so filtering on it hides packages
+  // that would install fine. Default those callers to the unfiltered view; the response
+  // echoes `compat` so nobody has to guess which mode ran.
+  const compat: "compatible" | "all" =
+    compatParam ?? (isDevBuild(sforumBuild) ? "all" : "compatible");
 
   const limitParam = cleaned(searchParams.get("limit"));
   let limit = DEFAULT_LIMIT;
@@ -114,6 +132,14 @@ export function parseCatalogQuery(searchParams: URLSearchParams): CatalogQueryRe
   }
   const kind: "plugin" | "theme" | null = kindParam;
 
+  // Unlike `compat`, this default never depends on the host build: omitting the parameter
+  // is exactly `strict`, so a client that predates it keeps today's list.
+  const platformParam = cleaned(searchParams.get("platform"));
+  if (platformParam !== null && platformParam !== "strict" && platformParam !== "all") {
+    return { ok: false, code: "invalid_query" };
+  }
+  const platform: "strict" | "all" = platformParam ?? "strict";
+
   const cursor = cleaned(searchParams.get("cursor"));
   if (cursor !== null && decodeCursor(cursor) === null) {
     return { ok: false, code: "invalid_cursor" };
@@ -123,10 +149,11 @@ export function parseCatalogQuery(searchParams: URLSearchParams): CatalogQueryRe
     ok: true,
     query: {
       channel,
-      sforum: cleaned(searchParams.get("sforum")),
-      sforumBuild: cleaned(searchParams.get("sforumBuild")),
+      sforum,
+      sforumBuild,
       os: cleaned(searchParams.get("os")),
       arch: cleaned(searchParams.get("arch")),
+      platform,
       compat,
       q,
       category: cleaned(searchParams.get("category")),
@@ -217,6 +244,11 @@ type ProductFacets = {
   socialSha256: string | null;
   ownerDisplayName: string | null;
   ownerUsername: string | null;
+  ownerAvatarUrl: string | null;
+  /** The issuer base URL the owner logged in from; null when that issuer row is gone. */
+  ownerIssuerBaseUrl: string | null;
+  /** `github_installations.account_login`; null when the product has no bound repository. */
+  githubAccountLogin: string | null;
   repoId: number | null;
   repoFullName: string | null;
   // README cache columns. `readmeRepoId` is compared with `repoId` so a row left over from
@@ -233,6 +265,7 @@ type CatalogView = {
   channel: "stable" | "beta" | null;
   os: string | null;
   arch: string | null;
+  platform: "strict" | "all";
   compat: "compatible" | "all";
 };
 
@@ -292,6 +325,9 @@ async function loadProductFacets(
       socialSha256: ogAssets.sha256,
       ownerDisplayName: accounts.displayName,
       ownerUsername: accounts.username,
+      ownerAvatarUrl: accounts.avatarUrl,
+      ownerIssuerBaseUrl: oauthIssuers.baseUrl,
+      githubAccountLogin: githubInstallations.accountLogin,
       repoId: products.repoId,
       repoFullName: githubRepos.fullName,
       readmeRepoId: productReadmes.repoId,
@@ -315,7 +351,17 @@ async function loadProductFacets(
     .leftJoin(ogAssets, eq(ogAssets.id, products.ogAssetId))
     .leftJoin(productReadmes, eq(productReadmes.productId, products.id))
     .leftJoin(accounts, eq(accounts.id, products.ownerAccountId))
+    // The forum the owner logged in from: its base URL is what makes a profile link possible.
+    // The store never guesses a forum host, and the plugin has no way to learn one.
+    .leftJoin(oauthIssuers, eq(oauthIssuers.issuerKey, accounts.issuerKey))
     .leftJoin(githubRepos, eq(githubRepos.repoId, products.repoId))
+    // The maintainer's GitHub side: which account the bound repository lives under. Not the
+    // same claim as "the author" (an org repository belongs to the org, not the developer),
+    // which is why the field is named `github` and the UI says 仓库账号.
+    .leftJoin(
+      githubInstallations,
+      eq(githubInstallations.installationId, githubRepos.installationId),
+    )
     .where(and(...conditions))
     .orderBy(desc(products.updatedAt), desc(products.id));
 
@@ -527,18 +573,34 @@ function buildSummary(
   // its GOOS/GOARCH, even when it cannot report a usable core version (sforum=unknown).
   // Otherwise a missing `sforum` would silently ignore the platform filter and hand a
   // linux host packages for other platforms.
+  //
+  // `platform=all` drops only this visibility rule: the operator asked to see what exists,
+  // not to have it judged installable. The flag is read as "explicitly all" rather than
+  // "not strict" on purpose: the failure mode of guessing wrong is a list full of packages
+  // this host cannot install, so an absent or unknown value keeps today's strict filter.
+  const platformAll = view.platform === "all";
   if (
+    !platformAll &&
     (view.os !== null || view.arch !== null) &&
     !candidates.some((candidate) => hasPlatform(candidate, view.os, view.arch))
   ) {
     return null;
   }
 
+  // The reported verdict uses os/arch in both platform modes: a product that only ships
+  // for another architecture is incompatible on this host, and `platform=all` must not
+  // relabel it as installable merely because it is now visible.
   const compatibility = compatibilityOf(candidates, host, view.os, view.arch);
+  // The `compat` filter is the *version* axis. Under `platform=all` it has to judge
+  // versions only, otherwise the platform verdict would hide again exactly the rows the
+  // operator just asked to see and the switch would have no visible effect at all.
+  const compatVerdict = platformAll
+    ? compatibilityOf(candidates, host, null, null)
+    : compatibility;
   if (
     host.version !== null &&
     view.compat === "compatible" &&
-    compatibility.status !== "compatible"
+    compatVerdict.status !== "compatible"
   ) {
     return null;
   }
@@ -560,9 +622,61 @@ function buildSummary(
     sforumVersion: latestRow?.constraint ?? "",
     updatedAt: facets.updatedAt.toISOString(),
     platforms: platformsOf(candidates),
+    // The card names one version, so "can this host run it" has to be answered for that
+    // version alone. `platforms` stays the union: it answers the different question "does
+    // any release support this host", which is what makes the "latest one cannot, an older
+    // one can" state visible to the client.
+    latestPlatforms: platformsOf(latestRow === null ? [] : [latestRow]),
     compatibility,
-    owner: facets.ownerDisplayName ?? facets.ownerUsername ?? null,
+    author: authorOf(facets),
   };
+}
+
+/**
+ * The maintainer block, built only from rows that exist.
+ *
+ * Both halves are optional and independent: a product can be owned by a forum account with
+ * no repository yet, or bound to a repository whose installation row was deleted. Missing
+ * one half never borrows the other's value — a fabricated author is worse than a short one.
+ * `null` means neither half exists, and the client draws no author strip at all.
+ */
+function authorOf(facets: ProductFacets): ProductSummary["author"] {
+  const username = facets.ownerUsername;
+  const displayName = facets.ownerDisplayName;
+  const avatarUrl = facets.ownerAvatarUrl;
+  const forum = username === null && displayName === null && avatarUrl === null
+    ? null
+    : { username, displayName, avatarUrl };
+
+  const login = facets.githubAccountLogin;
+  const github = login === null || login.length === 0
+    ? null
+    : { login, url: `https://github.com/${login}` };
+
+  if (forum === null && github === null) return null;
+  return {
+    username: forum?.username ?? null,
+    displayName: forum?.displayName ?? null,
+    avatarUrl: forum?.avatarUrl ?? null,
+    profileUrl: forumProfileUrl(facets.ownerIssuerBaseUrl, forum?.username ?? null),
+    github,
+  };
+}
+
+/**
+ * The owner's forum profile page, or null.
+ *
+ * Built from two facts the store already holds — the issuer base URL registered for that login
+ * source and the account's username — because the route belongs to the forum (`/u/<username>`,
+ * `apps/web/app/pages/u/[username].vue`) and neither the plugin page nor its backend can learn
+ * the forum host any other way. A missing half yields null rather than a link into nowhere.
+ */
+function forumProfileUrl(baseUrl: string | null, username: string | null): string | null {
+  if (baseUrl === null || username === null) return null;
+  const base = baseUrl.trim().replace(/\/+$/, "");
+  const name = username.trim();
+  if (base.length === 0 || name.length === 0) return null;
+  return `${base}/u/${encodeURIComponent(name)}`;
 }
 
 /**
@@ -593,7 +707,7 @@ function manifestOf(row: VersionRow): ReleaseVersion["manifest"] {
   };
 }
 
-function releaseOf(row: VersionRow): ReleaseVersion {
+function releaseOf(row: VersionRow, repoFullName: string | null): ReleaseVersion {
   const assets = sortedAssets(row).map((asset) => ({
     os: asset.os,
     arch: asset.arch,
@@ -608,7 +722,10 @@ function releaseOf(row: VersionRow): ReleaseVersion {
     publishedAt: (row.publishedAt ?? row.createdAt).toISOString(),
     sforumVersion: row.constraint,
     status: row.state === "yanked" ? "yanked" : "published",
+    // `notes` stays the raw Markdown source (audit + clients that render themselves);
+    // `notesHtml` is the sanitised rendering the admin page injects.
     notes: row.notesMd ?? null,
+    notesHtml: releaseNotesHtml(row.notesMd, repoFullName),
     capabilities: row.capabilities ?? [],
     assets,
   };
@@ -623,6 +740,7 @@ function releaseOf(row: VersionRow): ReleaseVersion {
 function buildReleases(
   versions: VersionRow[],
   channel: "stable" | "beta" | null,
+  repoFullName: string | null,
 ): ReleaseVersion[] {
   return versions
     .filter(
@@ -632,7 +750,7 @@ function buildReleases(
         (channel === null || row.channel === channel),
     )
     .sort((a, b) => compareVersionsDesc(a.version, b.version))
-    .map(releaseOf);
+    .map((row) => releaseOf(row, repoFullName));
 }
 
 function pageCompatibility(host: HostVersion): Compatibility {
@@ -647,6 +765,9 @@ function queryFingerprint(query: CatalogQuery): string {
     query.sforumBuild,
     query.os,
     query.arch,
+    // Both axes belong here: `strict` and `all` return different row sets for the same URL
+    // otherwise, and a shared ETag would serve one mode's body under the other's validator.
+    query.platform,
     query.compat,
     query.q,
     query.category,
@@ -676,6 +797,7 @@ export async function listCatalog(
     channel: query.channel,
     os: query.os,
     arch: query.arch,
+    platform: query.platform,
     compat: query.compat,
   };
 
@@ -725,6 +847,9 @@ export async function listCatalog(
     total,
     nextCursor,
     compatibility: pageCompatibility(host),
+    // Echo the mode that actually ran: a caller that omitted `compat` otherwise cannot
+    // tell the dev default from an explicit request. Optional, so old clients ignore it.
+    compat: view.compat,
   };
 
   return { body, etag: etagForJson(body, queryFingerprint(query)) };
@@ -775,7 +900,10 @@ export async function loadProductDetail(
   const summary = buildSummary(
     facet,
     versions,
-    { channel: null, os: null, arch: null, compat: "all" },
+    // The detail page must not narrow on platform: it publishes every release and the
+    // client picks one. `platform: "all"` here means "no architecture narrowing", which is
+    // why `latestPlatforms` is still filled from the latest row.
+    { channel: null, os: null, arch: null, platform: "all", compat: "all" },
     host,
   );
   if (summary === null) return null;
@@ -785,7 +913,7 @@ export async function loadProductDetail(
     readme: toProductReadme(facet),
     repoUrl:
       facet.repoFullName === null ? null : `https://github.com/${facet.repoFullName}`,
-    releases: buildReleases(versions, null),
+    releases: buildReleases(versions, null, facet.repoFullName),
   };
 }
 
@@ -801,7 +929,7 @@ export async function listProductReleases(
   const versions = (await loadVersionRows(db, [facet.id])).get(facet.id) ?? [];
   if (publishedCandidates(versions, null).length === 0) return null;
 
-  return buildReleases(versions, opts?.channel ?? null);
+  return buildReleases(versions, opts?.channel ?? null, facet.repoFullName);
 }
 
 export async function getProductRelease(
@@ -817,7 +945,9 @@ export async function getProductRelease(
   if (publishedCandidates(versions, null).length === 0) return null;
 
   // Exact manifest version, no `v`-prefix tolerance (plan §7.3.16).
-  const match = buildReleases(versions, null).find((release) => release.version === version);
+  const match = buildReleases(versions, null, facet.repoFullName).find(
+    (release) => release.version === version,
+  );
   return match ?? null;
 }
 

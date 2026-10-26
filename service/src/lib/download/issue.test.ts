@@ -15,6 +15,7 @@ import {
 } from "@/db/schema";
 import { TRUNCATE_ALL, TRUNCATE_TABLES } from "@/lib/test-support/db";
 import { getConfig, resetConfigForTests } from "@/lib/config";
+import { resetRuntimeConfigForTests } from "@/lib/settings/runtime";
 import { DEFAULT_DOWNLOAD_TTL_SECONDS } from "@/lib/settings/validate";
 import { issueDownloadUrl } from "./issue";
 import { verifyDownloadToken } from "./token";
@@ -212,13 +213,44 @@ function deps(overrides: { now?: number; ttlSeconds?: number } = {}) {
   };
 }
 
-beforeAll(async () => {
+/**
+ * `bun test` runs every file in one process and `getConfig()` caches its first read, so the
+ * environment this suite needs must be restored afterwards. An unrestored `STORE_PUBLIC_URL`
+ * silently re-points the next suite's derived URLs: `:3999` from here used to leak into
+ * `github/app-config.test.ts`, which expects `:3000`.
+ */
+const ENV_KEYS = [
+  "DATABASE_URL",
+  "NODE_ENV",
+  "STORE_PUBLIC_URL",
+  "STORE_SESSION_SECRET",
+  "STORE_DOWNLOAD_SECRET",
+  "STORE_SECRET_KEYS",
+] as const;
+
+const savedEnv = new Map<string, string | undefined>();
+
+function applyTestEnv(): void {
+  for (const key of ENV_KEYS) savedEnv.set(key, process.env[key]);
   process.env.DATABASE_URL = TEST_DATABASE_URL;
   process.env.NODE_ENV = "test";
   process.env.STORE_PUBLIC_URL = PUBLIC_URL;
   process.env.STORE_SESSION_SECRET = "s".repeat(64);
   process.env.STORE_DOWNLOAD_SECRET = DOWNLOAD_SECRET;
   process.env.STORE_SECRET_KEYS = `k1:${Buffer.alloc(32, 3).toString("base64")}`;
+}
+
+/** Puts every key back, deleting the ones that were unset before this file ran. */
+function restoreTestEnv(): void {
+  for (const [key, value] of savedEnv) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+  savedEnv.clear();
+}
+
+beforeAll(async () => {
+  applyTestEnv();
 
   resetConfigForTests();
 
@@ -242,6 +274,10 @@ afterAll(async () => {
   } finally {
     if (dbGuard) dbGuard.release();
     await closeDb();
+    restoreTestEnv();
+    // The runtime-settings cache is module state with a 15 s TTL; dropping it here keeps the
+    // `:3999` seed from answering the next suite's `getRuntimeConfig` call.
+    resetRuntimeConfigForTests();
     resetConfigForTests();
   }
 });

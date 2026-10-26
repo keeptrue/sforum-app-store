@@ -42,6 +42,7 @@ function QueueTable({ data }: { data: QueuesHealth }) {
             <TableHead className="text-right">retry</TableHead>
             <TableHead className="text-right">active</TableHead>
             <TableHead className="text-right">failed</TableHead>
+            <TableHead className="text-right">最久排队</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -67,6 +68,9 @@ function QueueTable({ data }: { data: QueuesHealth }) {
                 <TableCell className="text-right font-mono text-xs tabular-nums">
                   {queue.failed}
                 </TableCell>
+                <TableCell className="text-right font-mono text-xs tabular-nums">
+                  {formatQueueAge(queue.oldestQueuedAt)}
+                </TableCell>
               </TableRow>
             );
           })}
@@ -74,7 +78,16 @@ function QueueTable({ data }: { data: QueuesHealth }) {
       </Table>
       <p className="text-[12.5px] text-muted-foreground">
         created / retry / active 是待处理量；failed 是已终止的失败 job（保留到 retention 清理）。
+        “最久排队”只看 created：超过两分钟且没有 active 时，worker 很可能没在消费。
       </p>
     </div>
   );
+}
+
+function formatQueueAge(value: string | null): string {
+  if (value === null) return "—";
+  const minutes = Math.floor((Date.now() - Date.parse(value)) / 60_000);
+  if (minutes < 1) return "<1 分钟";
+  if (minutes < 60) return `${minutes} 分钟`;
+  return `${Math.floor(minutes / 60)} 小时`;
 }

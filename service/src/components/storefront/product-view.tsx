@@ -145,13 +145,22 @@ export function ProductView({ product }: { product: ProductDetail }) {
   // hydration, so the list exists without JavaScript and nothing shifts when it mounts.
   const readmeHeadings = product.readme ? extractHeadings(product.readme.html) : [];
 
+  // Two independent sources (see the contract's `Author`): the forum account that owns the
+  // product and the account the bound repository lives under. Missing halves stay missing —
+  // neither is filled in from the other, so the label says which one is absent.
+  const authorLabel =
+    product.author?.displayName ??
+    product.author?.username ??
+    (product.author?.github ? `@${product.author.github.login}` : "未绑定账号");
+
   const facts = [
     ["最新版本", `v${selected?.version ?? product.latestVersion}`, false],
     ["更新时间", formatDay(product.updatedAt), false],
     ["平台", platforms.map((item) => `${item.os}/${item.arch}`).join(" · ") || "—", true],
     ["sforumVersion", selected?.sforumVersion ?? "—", true],
     ["包大小", formatBytes(asset?.size), false],
-    ["维护者", product.owner ?? "未绑定账号", false],
+    ["维护者", authorLabel, false],
+    ["GitHub 仓库账号", product.author?.github ? `@${product.author.github.login}` : "—", true],
     ["清单作者", manifest?.author?.name ?? "—", false],
     ["项目主页", displayUrl(manifest?.url), false],
     ["清单语言", manifestLocales.length > 0 ? manifestLocales.join(" · ") : "—", true],
@@ -211,7 +220,7 @@ export function ProductView({ product }: { product: ProductDetail }) {
                 </>
               )}
               <span aria-hidden>·</span>
-              <span>{product.owner ?? "未绑定账号"}</span>
+              <span title={product.author?.username ?? undefined}>{authorLabel}</span>
             </div>
           </div>
 

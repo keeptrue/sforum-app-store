@@ -6,9 +6,11 @@
     "service"
   ],
   "scripts": {
-    "dev": "bun run --filter service dev",
+    "dev": "bun run --parallel --no-orphans dev:web worker",
+    "dev:web": "bun run --filter service dev",
     "build": "bun run --filter service build",
-    "start": "bun run --filter service start",
+    "start": "bun run --parallel --no-orphans start:web worker:prod",
+    "start:web": "bun run --filter service start",
     "contract:generate": "bun run --filter service contract:generate",
     "manifest:sync": "bun run --filter service manifest:sync",
     "manifest:check": "bun run --filter service manifest:check",
@@ -19,6 +21,7 @@
     "db:generate": "bun run --filter service db:generate",
     "db:migrate": "bun run --filter service db:migrate",
     "worker": "bun run --filter service worker",
+    "worker:prod": "NODE_ENV=production bun run --filter service worker",
     "admin:reset-password": "cd service && bun run admin:reset-password",
     "settings:public-url": "cd service && bun run settings:public-url",
     "backup:legacy-media": "bun run --filter service backup:legacy-media",

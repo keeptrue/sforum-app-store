@@ -1,4 +1,7 @@
 import MarkdownIt from "markdown-it";
+// The package exports the instance type separately from the callable default; annotating with
+// the default value is what `tsc` rejects.
+import type { MarkdownIt as MarkdownItInstance } from "markdown-it";
 import anchor from "markdown-it-anchor";
 import taskLists from "markdown-it-task-lists";
 import hljs from "highlight.js/lib/core";
@@ -178,21 +181,37 @@ export type ReadmeRenderInput = {
   format: ReadmeSourceFormat;
 };
 
+/**
+ * `repoFullName` may be empty: release notes can be rendered for a product whose repository
+ * binding is gone. A relative reference then has no repository to resolve against, so it is
+ * dropped instead of being pointed at `raw.githubusercontent.com//…`.
+ */
 type RenderEnv = { repoFullName: string; path: string };
 
-const markdown = new MarkdownIt({
-  // Raw HTML is allowed through the parser and removed by the allow-list below; without
-  // this, `<details>` and `<picture>` in a README would render as literal text.
+/**
+ * Parser options shared by both documents. Raw HTML is allowed through the parser and
+ * removed by the allow-list below; without this, `<details>` and `<picture>` would render as
+ * literal text.
+ */
+const MARKDOWN_OPTIONS = {
   html: true,
   linkify: true,
   breaks: false,
   typographer: false,
-});
+} as const;
+
+function createMarkdown(): MarkdownItInstance {
+  return new MarkdownIt(MARKDOWN_OPTIONS);
+}
 
 // GFM task lists render as read-only checkboxes. `enabled: false` is the whole point: a
 // visitor must not be able to tick a box that only exists in a README, and `label: false`
-// keeps the plugin from emitting an `<label>` (which the allow-list would drop anyway).
-markdown.use(taskLists, { enabled: false, label: false });
+// keeps the plugin from emitting a `<label>` (which the allow-list would drop anyway).
+function useTaskLists(md: MarkdownItInstance): MarkdownItInstance {
+  return md.use(taskLists, { enabled: false, label: false });
+}
+
+const markdown = useTaskLists(createMarkdown());
 
 /**
  * Heading ids stay readable for CJK. The plugin's default slugifier percent-encodes
@@ -223,12 +242,28 @@ markdown.use(anchor, {
  * the most common section level (`###`) down to `h4`, where it rendered at body size and
  * stopped reading as a section at all.
  */
-markdown.core.ruler.push("sforum_heading_level", (state) => {
-  for (const token of state.tokens) {
-    if (token.type !== "heading_open" && token.type !== "heading_close") continue;
-    if (token.tag === "h1") token.tag = "h2";
+function readmeHeadingTag(tag: string): string {
+  return tag === "h1" ? "h2" : tag;
+}
+
+/**
+ * Release notes render under a per-release `h3` inside the admin dialog (`h2` is the product
+ * name), so their headings start one level lower than a README's. `#` and `##` collapse to
+ * `h4` for the same reason a README collapses `#` into `h2`: GitHub release bodies use `##`
+ * as the ordinary section level, and demoting everything by exactly two would push `###`
+ * down to body size.
+ */
+function notesHeadingTag(tag: string): string {
+  switch (tag) {
+    case "h1":
+    case "h2":
+      return "h4";
+    case "h3":
+      return "h5";
+    default:
+      return "h6";
   }
-});
+}
 
 function escapeHtml(value: string): string {
   return value
@@ -254,28 +289,44 @@ function highlightLanguage(info: string): keyof typeof HIGHLIGHT_LANGUAGES | nul
  * the copy button have to sit still while the code scrolls horizontally. Highlighting is
  * class-based so the allow-list can keep refusing `style`.
  */
-markdown.renderer.rules.fence = (tokens, idx) => {
-  const token = tokens[idx]!;
-  const language = highlightLanguage(token.info);
-  const body =
-    language === null
-      ? escapeHtml(token.content)
-      : hljs.highlight(token.content, { language, ignoreIllegals: true }).value;
-  const lang = language === null ? "" : ` data-lang="${escapeAttr(language)}"`;
-  const codeClass = language === null ? "" : ` class="hljs language-${escapeAttr(language)}"`;
-  return `<div class="readme-code"${lang}><pre><code${codeClass}>${body}</code></pre></div>`;
-};
+function installRules(
+  md: MarkdownItInstance,
+  mapHeading: (tag: string) => string,
+  rulerName: string,
+): MarkdownItInstance {
+  md.core.ruler.push(rulerName, (state) => {
+    for (const token of state.tokens) {
+      if (token.type !== "heading_open" && token.type !== "heading_close") continue;
+      const next = mapHeading(token.tag);
+      if (next !== token.tag) token.tag = next;
+    }
+  });
 
-/**
- * Wrap every table in a scroll container. `role="region"` + `tabindex="0"` is what makes the
- * container reachable and scrollable from the keyboard, which a plain `overflow-x: auto` box
- * is not.
- */
+  md.renderer.rules.fence = (tokens, idx) => {
+    const token = tokens[idx]!;
+    const language = highlightLanguage(token.info);
+    const body =
+      language === null
+        ? escapeHtml(token.content)
+        : hljs.highlight(token.content, { language, ignoreIllegals: true }).value;
+    const lang = language === null ? "" : ` data-lang="${escapeAttr(language)}"`;
+    const codeClass = language === null ? "" : ` class="hljs language-${escapeAttr(language)}"`;
+    return `<div class="readme-code"${lang}><pre><code${codeClass}>${body}</code></pre></div>`;
+  };
+
+  // Wrap every table in a scroll container. `role="region"` + `tabindex="0"` is what makes
+  // the container reachable and scrollable from the keyboard, which a plain
+  // `overflow-x: auto` box is not.
+  md.renderer.rules.table_open = () => `${TABLE_OPEN}<table>\n`;
+  md.renderer.rules.table_close = () => "</table>\n</div>\n";
+
+  return md;
+}
+
 const TABLE_OPEN =
   '<div class="readme-table" role="region" tabindex="0" aria-label="表格，可横向滚动">';
 
-markdown.renderer.rules.table_open = () => `${TABLE_OPEN}<table>\n`;
-markdown.renderer.rules.table_close = () => "</table>\n</div>\n";
+installRules(markdown, readmeHeadingTag, "sforum_heading_level");
 
 function isAbsoluteUrl(value: string): boolean {
   return /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(value) || value.startsWith("//");
@@ -345,6 +396,10 @@ function resolveImage(source: string, env: RenderEnv): ImageResolution {
       : null;
   }
 
+  // A relative reference is only meaningful against a bound repository. Release notes can be
+  // rendered for a product whose binding is gone, and a URL built from an empty repo name
+  // (`raw.githubusercontent.com//HEAD/…`) would be a broken image, not a document.
+  if (env.repoFullName.length === 0) return null;
   const path = resolveRepoPath(env.path, value);
   if (path === null) return null;
   return { kind: "image", url: `${RAW_BASE}/${env.repoFullName}/HEAD/${path}` };
@@ -370,6 +425,7 @@ function resolveLink(href: string, env: RenderEnv): LinkResolution {
     return null;
   }
 
+  if (env.repoFullName.length === 0) return null;
   const path = resolveRepoPath(env.path, value);
   if (path === null) return null;
   return { href: `${GITHUB_BASE}/${env.repoFullName}/blob/HEAD/${path}`, external: true };
@@ -518,3 +574,32 @@ export function renderReadme(input: ReadmeRenderInput): string {
 export function sanitizeReadmeHtml(html: string, env: RenderEnv): string {
   return sanitizeHtml(html, sanitizeOptions(env));
 }
+
+/**
+ * Release notes are a second markdown document on the same allow-list.
+ *
+ * Differences from a README, both deliberate:
+ *
+ * 1. **No `markdown-it-anchor`.** One dialog lists every release, so generated heading ids
+ *    would collide across versions and a `#` permalink would deep-link to the wrong entry.
+ *    The notes have no table of contents to build, so the ids buy nothing.
+ * 2. **Headings start at `h4`.** They render under a per-release `h3` inside a dialog whose
+ *    title is `h2`; see `notesHeadingTag`.
+ *
+ * Relative images and links resolve against the repository root, which is how a release body
+ * is written on GitHub. `repoFullName` may be empty (unbound product): relative references
+ * are then dropped rather than pointed at a nonexistent repository.
+ */
+export function renderReleaseNotes(input: {
+  source: string;
+  repoFullName: string | null;
+}): string {
+  const env: RenderEnv = { repoFullName: input.repoFullName ?? "", path: "" };
+  return sanitizeHtml(notesMarkdown.render(input.source, env), sanitizeOptions(env));
+}
+
+const notesMarkdown = installRules(
+  useTaskLists(createMarkdown()),
+  notesHeadingTag,
+  "sforum_notes_heading_level",
+);
