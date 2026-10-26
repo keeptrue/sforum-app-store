@@ -82,6 +82,9 @@ beforeEach(async () => {
 });
 
 afterAll(async () => {
+  // 测试不得把 settings 行留给后续用例：CI 的 /api/health 探针用例曾因此读到
+  // 这里最后一条用例保存的 public_url，被环境状态判红。
+  await getPool().query("delete from store_settings");
   await closeDb();
   resetConfigForTests();
   resetRuntimeConfigForTests();
