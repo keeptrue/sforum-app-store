@@ -153,10 +153,16 @@ export function Catalog({ body, params }: CatalogProps) {
       {body.items.length === 0 ? (
         <EmptyState hasFilters={hasFilters} kind={kind} />
       ) : (
-        <div className="grid gap-4 md:grid-cols-2 lg:gap-[18px]">
-          {body.items.map((product) => (
-            <ProductCard key={product.slug} product={product} />
-          ))}
+        // Shelf widths are measured on the grid's own column, never the viewport: the rail
+        // leaves a 1024 viewport with ~596px of content, so 560 is the floor that keeps it at
+        // two columns instead of collapsing to one. 1340 is where a four-column card still
+        // holds 321px — (1340 − 3×18) / 4.
+        <div className="@container">
+          <div className="grid grid-cols-1 gap-4 @min-[560px]:grid-cols-2 @min-[960px]:grid-cols-3 @min-[960px]:gap-[18px] @min-[1340px]:grid-cols-4">
+            {body.items.map((product) => (
+              <ProductCard key={product.slug} product={product} />
+            ))}
+          </div>
         </div>
       )}
 
@@ -208,10 +214,12 @@ function ProductCard({ product }: { product: ProductSummary }) {
     <Link
       href={`/p/${product.slug}`}
       aria-label={`查看 ${product.name} 详情`}
-      className="group flex h-full flex-col overflow-hidden rounded-card border border-border bg-card text-left transition-[transform,box-shadow,border-color] duration-300 hover:-translate-y-[3px] hover:border-foreground/20 hover:shadow-[0_26px_50px_-26px_rgba(18,18,18,.35)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+      className="group @container/card flex h-full flex-col overflow-hidden rounded-card border border-border bg-card text-left transition-[transform,box-shadow,border-color] duration-300 hover:-translate-y-[3px] hover:border-foreground/20 hover:shadow-[0_26px_50px_-26px_rgba(18,18,18,.35)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
     >
+      {/* 42cqw tracks the card, not the viewport: the plate keeps its 152px at three columns
+          (370 → 155, clamped) and sheds height in a 272px card so the meta row keeps its room. */}
       <div
-        className={`plate-surface ${plate} relative mx-2 mt-2 flex h-[152px] items-end overflow-hidden rounded-plate px-4 pb-4`}
+        className={`plate-surface ${plate} relative mx-2 mt-2 flex h-[clamp(124px,42cqw,152px)] items-end overflow-hidden rounded-plate px-4 pb-4`}
       >
         {product.socialImageUrl ? (
           // The package's own 1280×640 brand card is the cover. It is a real picture, not a
@@ -254,7 +262,7 @@ function ProductCard({ product }: { product: ProductSummary }) {
       </div>
 
       <div className="flex flex-1 flex-col px-4 pb-4 pt-3.5">
-        <h3 className="truncate text-[19px] font-semibold leading-tight tracking-[-.01em]">
+        <h3 className="truncate text-[clamp(16.5px,4.6cqw,19px)] font-semibold leading-tight tracking-[-.01em]">
           {product.name}
         </h3>
         <div className="mt-1 truncate font-mono text-[12px] text-muted-foreground">
@@ -293,7 +301,7 @@ function ProductCard({ product }: { product: ProductSummary }) {
           {compatibility && (
             <span
               title={compatibility.hint}
-              className={`ml-auto inline-flex items-center gap-1.5 text-[12px] ${COMPAT_TONE[compatibility.variant]}`}
+              className={`inline-flex items-center gap-1.5 text-[12px] ${COMPAT_TONE[compatibility.variant]} @min-[380px]/card:ml-auto`}
             >
               <span aria-hidden className="size-1.5 rounded-full bg-current" />
               {compatibility.label}
@@ -308,8 +316,8 @@ function ProductCard({ product }: { product: ProductSummary }) {
           <span className="text-[12.5px] tabular-nums text-muted-foreground">
             {formatMonthDay(product.updatedAt)}
           </span>
-          <span className="ml-auto rounded-pill border border-foreground/20 bg-foreground/[.07] px-3 py-1.5 text-[12.5px] font-semibold text-foreground transition-colors group-hover:border-transparent group-hover:bg-primary group-hover:text-primary-foreground">
-            查看安装包
+          <span className="ml-auto whitespace-nowrap rounded-pill border border-foreground/20 bg-foreground/[.07] px-3 py-1.5 text-[12.5px] font-semibold text-foreground transition-colors group-hover:border-transparent group-hover:bg-primary group-hover:text-primary-foreground">
+            <span className="hidden @min-[340px]/card:inline">查看</span>安装包
           </span>
         </div>
       </div>
