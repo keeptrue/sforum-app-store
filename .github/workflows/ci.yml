@@ -80,7 +80,7 @@ jobs:
         with:
           repository: zhuchunshu/SForum
           path: SForum
-          ref: 5a4ce5eaf341ba0825fdb6ffca87e63be88d3250 # v3.0.17
+          ref: 998098ceeaa4aa1aa862fa604a944ecdc95d4fee # v3.0.17
 
       - uses: actions/setup-go@v5
         with:
