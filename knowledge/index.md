@@ -2,7 +2,9 @@
 
 ## 当前状态
 
-**实现阶段，S0–S6 已完成（本地验收）+ 2026-10-24 收尾轮 + 2026-10-25 产品身份单源化。** `service/` 有 Next.js 骨架、
+**实现阶段，S0–S6 已完成（本地验收）+ 2026-10-24 收尾轮 + 2026-10-25 产品身份单源化 +
+2026-10-26 管理页三项（更新说明渲染 / 作者信息 / 安装门禁）+ 架构可用性（`latestPlatforms` / `platform=strict|all`）+
+架构自动匹配（目录恒 `platform=all`、无架构选择、卡片给「支持 / 不支持当前架构」判决）。** `service/` 有 Next.js 骨架、
 `contracts/store-api.yaml`、Postgres/Drizzle、OAuth2 登录/会话、GitHub App 客户端、
 webhook/worker、release 同步/检测、DB 驱动的目录与详情、公开 `/api/v1`、签名下载代理、
 产品 CRUD 与内容寻址图片、审核流（首个产品人工、后续按策略自动）、开发者门户与审核台、
@@ -15,12 +17,75 @@ userinfo 是 camelCase。客户端与 fake provider 同时修正，并加了 `cl
 另关闭三项遗留：仪表盘列表 N+1、审核台 GitHub Actions 提示、插件管理页 en-US。
 
 仍未验证：① 带登录会话的浏览器点击安装（宿主客户端只收 `https:`，服务端下载器写死公网
-HTTPS）；② 完整真实 provider 登录（缺 client secret 与论坛用户会话）；③ 真实 GitHub App。
+HTTPS）；② 完整真实 provider 登录（缺 client secret 与论坛用户会话）；③ 真实 GitHub App；
+④ 安装门禁的**降级**分支（本机没有「已装版本高于商城任一版本」的产品，只有单测覆盖）。
 详见 `sessions/2026-10-24-s7-provider-contract-and-optional-items.md`。
 
 ## Latest Handoff
 
-`sessions/2026-10-25-store-menu-version-inventory.md` —— 插件从「一个 component 页」补成真正可运营的入口：
+`sessions/2026-10-26-arch-selection-removal-handoff.md` —— 商城不再提供架构选择：目录恒发
+`platform=all`（产品不因异架构消失），删「只看支持当前架构」开关与安装条平台下拉；平台由
+`defaultPlatform` 按宿主 `target` 自动决定（精确 → `any/any` → 第一项）。卡片新增正向判决
+`支持当前架构`（顶掉原始平台 chip，清单进 `title`），`supportedAnywhere === false` 时抑制兼容
+徽标；安装条空闲且可装时显示 `支持当前架构（linux/amd64）`。服务端/契约/Go 后端零改动。
+证据：插件前端 **162 pass / 0 fail**、`build.sh` manifest OK（mjs 56,283 B / css 18,099 B，预算
+81,920 / 20,480）、后端 `go vet`/`go test` 绿、宿主真机 `?channel=stable&platform=all` → 200，
+卡片与安装条判决命中，桌面 1569×763 + 390×844 截图，移动端 footer 三行不溢出。决策
+`decisions/2026-10-26-arch-auto-detect.md`。
+
+其前：`sessions/2026-10-26-platform-availability-handoff.md` —— 架构可用性：`ProductSummary.latestPlatforms`
+（卡片指向的那一版，与 `platforms` 并集语义不同；空数组=不知道、字段缺失=旧服务端回落）+
+目录查询 `platform=strict|all`（默认 strict，`all` 只放宽可见性、版本轴仍生效，否则开关无效果）。
+管理页新增 `platform.ts`/`foot.ts`、`installGate` 的 `platformUnsupported`（平台判定先于版本判定）、
+卡片两种徽标、弹窗默认选最新可运行版本、平台下拉只留宿主/any、「只看支持当前架构」开关（默认开）。
+证据：商城 **790 pass / 66 files**、typecheck 干净、`contract:generate` 无 diff、插件前端 **162 pass**、
+后端 `go vet`/`go test` 绿、`build.sh` 摘要与三份产物逐项一致、宿主真机 1633×810 + 390×844
+（strict=4 / all=5、`platform=bogus`→400、徽标/默认版本/禁用安装/下拉过滤全部命中）。
+同批还恢复了一次 dev 库被一次性脚本清空的目录数据（`0/0/0/0` → `3/7/9/7`，见 handoff 的
+「DB 事故与恢复」）。已知限制：旧服务端回落只有响应注入 + 单测、运行阶段 409 只有宿主单测、
+平台下拉含 `any/any` 的真机样本缺。决策 `decisions/2026-10-26-platform-availability.md`
+（该轮的架构开关与平台下拉已由 `decisions/2026-10-26-arch-auto-detect.md` 取代）。
+
+其前：`sessions/2026-10-26-notes-author-gate-handoff.md` —— 商城管理页三项收口：更新说明改服务端渲染
+（`ReleaseVersion.notesHtml`，复用 README 的渲染器与白名单，标题压到 `h4`、无 anchor、200 条内容
+寻址 memo）、`ProductSummary.owner` 换成结构化 `author`（论坛账号 + 绑定仓库的 GitHub 账号，两半
+独立，GitHub 链接由插件按白名单 `login` 重拼）、安装条加门禁（每版本 `installedRelation`
+`newer|same|older|unknown`，同版本/降级/不可解析 → 只留一枚禁用主按钮，不提供卸载入口）、
+作者条里的 `@用户名` 链到论坛个人主页（商城按 issuer 基址拼 `profileUrl`）。顺带补回宿主
+preflight 清掉的清单项目符号，并把 `dist/*.css` 也改成构建产物（17,988 B / 预算 20,480）。证据：
+商城 **784 pass / 66 files**、typecheck 干净、插件前端 **125 pass**、后端 `go vet`/`go test` 绿、
+宿主四闸全绿、真机 1601×625 + 390×844 各一组截图。已知限制：降级态只有单测、staged 候选对宿主
+清单不可见、表格滚动容器的 `aria-label` 仍是中文硬编码。决策
+`decisions/2026-10-26-{release-notes-markdown,install-gate,product-author-surface}.md`。
+
+其前：`sessions/2026-10-26-dev-compat-filter-handoff.md` —— 兼容过滤口径收口：dev 宿主默认
+`compat=all`（不按版本过滤），其余有效宿主默认 `compatible`，显式 `compat` 始终优先；
+`CatalogPage.compat` 作为可选字段回显本次实际生效的口径。预发布 core 的约束求值改成与 core
+对齐：组级 `includePrerelease`（对应 Masterminds 的 `containsPre`）+ `major.minor.patch`
+基线重试（对应 `CheckSForumVersion` 的 `releaseBase`），`!=` 两次都生效 —— 只做 baseline 重试
+会漏 4 行「core 收、store 藏」。证据：Go 直跑 Masterminds v3.5.0 的 **420 行**判定矩阵
+**0 mismatch**；`bun test` **770 pass / 0 fail / 2616 expect / 65 files**（此前 765/2，那 2 条是
+`download/{issue,resolve}.test.ts` 泄漏 `STORE_PUBLIC_URL`，连 `getRuntimeConfig()` 的 15 s
+模块级缓存一起修掉——只还原 env 仍会红），typecheck exit 0，`manifest:check` 摘要未变。
+**已知限制**：公开站会原样转发访客手写的 `sforum`/`sforumBuild`，带参数时仍出逐卡「按开发版
+估算」徽标（访客声明，不与插件页统一）；没报版本的老宿主仍走 `1.0.0` 兜底。计划口径已同步
+（§7.3.8、§5.7、§7.3.9、§10.2 Q6 指针）。
+
+其前：`sessions/2026-10-26-catalog-card-dialog-handoff.md` —— 商城管理页目录改版：一行一条 + 常驻右栏 →
+卡片网格（列数用容器查询 1120/940/552 → 4/3/2/1；宿主侧栏可拖 14–22rem，视口断点会错判）+
+挂 `document.body` 的三 Tab 弹窗（README / 版本信息 / 更新说明，底部 64px 安装条常驻；
+`.sfstore` 的 `container-type` 会成为 fixed 后代的包含块，留在页面根会被裁）。安装语义未变
+（成功仍是「已暂存」，启用/信任在 core，旧宿主走签名链接）。真机（1331×948）暴露并修掉六处：
+primary hover 被通用 `:hover` 压成白底白字、宿主 `UModal` 无 z-index 被遮罩盖住、取消安装弹红色
+Toast、确认框关闭后焦点无落点、3 列下徽标被压成省略号、compat 口径（新增 `auto`，显式
+`compatible` 真的发出去）。`catalog.css` 20,403 B / 门禁 20,480（余 77 B）、`catalog.mjs` 47,066 B /
+81,920，`bun test` 89 pass / 681 expect，清单摘要已更新（`f541286f…` / `3c1c9088…`）。
+CDP harness 四档列数 4/3/2/1、`metaOverflow=0`、弹窗 1040/1040/960/390、高 713/713/780/844、
+footer 桌面恒 65px；真机验证 hover、宿主确认框、取消后 `toastCount=0` 与焦点归还、Tab 双向回绕。
+**未完成**：1633×810 与 390×844 两档真机截图（内置浏览器视口固定）；焦点陷阱在 Bun DOM 替身里
+天然 no-op；远端封面图未做超时降级。决策 `decisions/2026-10-26-catalog-card-dialog.md`。
+
+其前：`sessions/2026-10-25-store-menu-version-inventory.md` —— 插件从「一个 component 页」补成真正可运营的入口：
 `admin.pages` 两页同 `group=应用商城`（商城 `/catalog` + 设置 `/settings`，后者由宿主 Schema UI 渲染，
 `permission=extension.plugin.manage`），后台第一次能改商城地址；后端把 v2 握手拿到的
 `coreVersion`/`buildVersion` 作为 `sforum`/`sforumBuild` 转发（`compat` 开关默认 `compatible`），

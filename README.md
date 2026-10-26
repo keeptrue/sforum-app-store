@@ -11,13 +11,15 @@ webhook 验签/幂等、pg-boss worker 与 release 同步/检测。审核台与�
 
 ```bash
 bun install
-bun run dev          # http://127.0.0.1:4000
+bun run dev          # web + worker，http://127.0.0.1:4000
 bun run build        # Bun 运行时闸门
+bun run start        # web + worker（生产）
+bun run start:web    # 只起 web（多副本 / 排障）
 bun run test         # unit + Postgres 集成
 bun run contract:generate
 bun run db:migrate   # 需要 service/.env.local
 bun run seed:dev     # 本地预览数据（幂等；生产不用）
-bun run worker       # GitHub webhook / release 同步
+bun run worker       # 只起 worker（GitHub webhook / release 同步）
 curl http://127.0.0.1:4000/api/health
 ```
 
@@ -37,7 +39,9 @@ curl http://127.0.0.1:4000/api/health
 2. **全量 GitHub App**，不存 PAT；私有 release 只经 installation token 读取。
 3. **不存包体**：ZIP 只在临时文件里过一遍，检测完即删。
 4. **所有下载走商城签名短链**，不暴露 GitHub 原始地址；免费/私有都在同一条信任链上。
-5. **安装只经 SForum core 的 `extensions.install.*` 意图 + worker**，商城只暂存，永不代劳启用或信任。
+5. **安装与启用都只经 SForum core 的宿主动作**（`bridge.installExtension` / `bridge.installAndEnableExtension`）：
+   商城把包与身份交给宿主，启用、信任、激活由宿主按自己的规则决定，商城永不代劳。
+   插件清单声明了 `extension.install.enable`，因此需要带这个动作的 core（旧 core 会拒绝整份清单）。
 
 ## 先读什么
 

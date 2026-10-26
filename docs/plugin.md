@@ -8,11 +8,17 @@
 | 能力 | 宿主面 | 缺失时的表现 |
 | --- | --- | --- |
 | 页面内安装 | 页面级宿主动作 `hostActions: ["extension.install"]` + `bridge.installExtension`（SForum `10c2b21e8`，2026-10-24） | 清单被拒（更旧的宿主）或安装按钮隐藏、只给可复制的签名链接 |
+| 安装并启用 | 同一页再声明 `"extension.install.enable"` + `bridge.installAndEnableExtension` | **清单级硬依赖**：不认识这个动作 id 的 core 把整份清单判为非法（`validateAdminHostActions` → `ErrInvalidManifest`），页面根本不加载 |
 | 菜单分组 | 清单 `admin.pages[].group`（同一扩展的多个 menu 页收进一个可展开一级菜单） | 两个页平铺在「扩展管理」里，功能不受影响 |
 | 宿主版本 | v2 握手 `host_build` → 插件 `Server.HostBuild()` | 目录恒为 `compatibility=unknown`、不过滤、不显示「兼容」判词 |
 | 已装清单 | Query `sforum.core.extensions.inventory.list`（能力 `extensions.read`，中等风险） | 不显示「已安装 / 可更新」，其余功能不受影响 |
 
-三条都是**特性检测 + 降级**，不是硬依赖：旧宿主只会少功能，不会把页面打崩。
+前三条是**特性检测 + 降级**：旧宿主只会少功能，不会把页面打崩。
+
+`extension.install.enable` 是例外，它是**清单级硬依赖**：宿主校验清单时，未知的动作 id 会让整份
+`sforum.extension.json` 变成非法（`ErrInvalidManifest`），不是「悄悄降级成只安装」——页面在那种 core 上
+压根不会加载。所以本扩展需要带这个动作的 core；页面里的 `installAndEnableExtension` 特性检测只用于
+「core 认得动作但没注入方法」这种半新状态，不是旧宿主兼容层。
 
 ## 2. 菜单与页面
 
@@ -87,6 +93,31 @@ APP_ENV=development EXTERNAL_EXTENSION_ROOTS=/path/to/sforum-app-store/plugin \
 读取结果缓存 60 秒（失败也缓存，避免一次能力缺失让每个目录请求都等满超时）。徽标来源是
 **宿主清单事实**，与安装流程的成功语义无关——后者仍然只写「已暂存」。
 
+同一份清单还决定**安装门禁**：后端为每个版本算 `installedRelation`（`newer` / `same` /
+`older` / `unknown`，与「可更新」同一个 semver 实现），页面据此决定安装条：
+
+- 未安装 → 「安装到论坛」；选中版本更高 → 「更新到 vX」；
+- 同版本 / 低于已安装 / 无法比较 → 主按钮降成禁用的「已安装 vX」，原因写在安装条的状态位里。
+  页面**不提供卸载入口**：卸载是 core 的破坏性动作，不该放在浏览目录的手势路径上。
+
+为什么不是页面上自己比版本：页面是零依赖手写 ESM，两套版本比较一定漂移。为什么阻断而不是
+隐藏：core 对同 id 的包一律当候选暂存，同版本重装只是再下载一次 + 再确认一次信任，降级则
+可能踩不可逆迁移；空位又会被读成页面坏了。**这是 UX 守卫，不是安全边界** —— 把签名链接粘到
+core 的安装页仍然能装任意同 id 包。
+
+## 6.1 作者信息
+
+详情弹窗的 README 分区顶部有一条作者信息，来自商城 `author` 字段的两半（互不替补）：
+
+- 论坛账号：显示名 + `@username`（`accounts.display_name` / `username`），其中 `@username`
+  是指向论坛个人主页的链接（商城按 issuer 基址拼成 `<base>/u/<username>`，放在
+  `author.profileUrl`；缺失时是纯文本）；
+- GitHub 仓库账号：绑定仓库所属账号的 `@login`（`github_installations.account_login`），
+  链接由插件用 login 重新拼成 `https://github.com/<login>`，不信上游整串 URL。
+
+头像加载失败退字母块；两半都没有时整条不渲染。文案写「GitHub 仓库账号」而不是「作者」：
+组织仓库属于组织，不是开发者本人。
+
 ## 7. 安装到底做了什么
 
 1. 管理页向后端要 `{url, sha256, size, expiresAt}`（商城签名短链，30 分钟有效）。
@@ -133,6 +164,11 @@ APP_ENV=development EXTERNAL_EXTENSION_ROOTS=/path/to/sforum-app-store/plugin \
 | 目录行没有「兼容 / 不兼容」 | 同上：没有宿主版本就没有判词 | 同上；core 在安装/启用时仍会兜底拒绝 |
 | 开关「只看当前版本可安装」不见了 | 页级结论是 `unknown` | 设计如此：过滤不生效时不给假开关 |
 | 看不到「已安装 / 可更新」 | 清单没声明 `extensions.read`、能力未授予，或宿主过旧 | 启用时确认能力已授予；旧宿主无此面 |
+| 安装按钮变成「已安装 v…」且不可点 | 选中版本 ≤ 已装版本（同版本或降级），或两者有一个不是 semver | 要重装/降级到 core 的扩展页卸载；`unknown` 时到 core 的安装页处理 |
+| 昵称后面的 `@用户名` 点不动 | 商城是旧版（没有 `author.profileUrl`），或该账号的 issuer 配置已被删 | 升级商城；`oauth_issuers` 里要保留登录来源的基址 |
+| 更新说明显示成 `## 标题` 这样的字面量 | 商城是旧版，没有 `notesHtml`；页面按纯文本回退 | 升级商城；这是有意的降级路径，不是渲染失败 |
+| 作者信息整条不见了 | 商城是旧版（没有 `author`），或产品既没绑论坛账号也没绑仓库 | 升级商城；绑定产品仓库后重进详情 |
+| 清单没有项目符号，只剩缩进 | 宿主 `dist` 还是旧构建（`list-style` 由插件 CSS 补回） | 重新 `bash plugin/scripts/build.sh` 并让宿主切到新制品 |
 | 数据带「更新于 X」 | 商城不可达，用了 24 小时内的缓存 | 恢复商城连通性后刷新 |
 
 ## 10. 构建与校验（仓库内）

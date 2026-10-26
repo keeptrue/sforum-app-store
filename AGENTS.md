@@ -33,10 +33,12 @@ SForum 应用商城：一个**独立服务端**加一个 **SForum 插件**，让
    因为它们是展示内容而不是安装包。
 4. **不暴露上游地址。** 目录只发商城签名短链；GitHub 的 `browser_download_url` 永不出现在
    任何响应里。
-5. **不代劳启用/信任。** 安装只经宿主的页面动作（`bridge.installExtension`）把包交给 core，
-   最终 `staged` 即止；启用、信任、激活一律由论坛管理员在 core 页面完成。
+5. **不代劳启用/信任。** 安装只经宿主的页面动作把包交给 core：`bridge.installExtension` 只暂存，
+   `bridge.installAndEnableExtension` 由**宿主**按自己的规则启用（可执行后端的包仍要 super_admin 的
+   一次性信任确认，非超管/主题包停在 `staged`）。商城不 enable、不 trust、不 upgrade，也不自己判定
+   信任；页面只转述宿主回报的 `outcome`。
 6. **商城不写论坛数据库、不调论坛内部接口。** 与论坛的唯一面是 OAuth2 登录端点、userinfo，
-   以及插件管理页调用宿主的 `bridge.installExtension` 页面动作。
+   以及插件管理页调用宿主的 `bridge.installExtension` / `bridge.installAndEnableExtension` 页面动作。
 7. **商城角色不来自论坛用户组。** `moderator` 由本仓 `store_roles` 决定；`admin` 是
    `admin_accounts` 里的本地账号，`store_roles.role='admin'` 已废弃（旧行保留但不参与鉴权）。
 8. **产品身份只来自 GitHub。** 创建只能经「从 GitHub 导入」（release 里的清单）；名称取自清单，

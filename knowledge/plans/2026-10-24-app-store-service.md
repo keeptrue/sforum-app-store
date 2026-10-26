@@ -64,7 +64,8 @@ Started: 2026-10-24
     `Cookie` 与 `Authorization`）。任何走 Basic 认证的标准 OAuth 库都会失败。
 12. **已核实：宿主当前没有向插件暴露应用版本**。`apps/api/version` 有
     `CoreCompatibilityVersion()`（`version.go:81-89`：`dev` → `1.0.0`，其余原样返回、**不校验
-    semver**），但它只被 migrator 与 DB 兼容闸门使用；插件能拿到的 `host.api`
+    semver**；2026-10-26 起 dev 改为从 git tag 派生，见 §10.2 Q6 指针），但它只被 migrator 与
+    DB 兼容闸门使用；插件能拿到的 `host.api`
     `Ping.data.version` 是 **Host API 协议版本**（`app/Support/HostAPI/v1_test.go:99`），不是
     应用版本。唯一带 `HostSForumVersion` 的 `app/Support/Marketplace/**` 在 P0 整包删除。
     SForum 伴生计划 D9 明确「暂不做 `hostVersion`」。结论：商城要按约束过滤，必须先由 SForum
@@ -330,10 +331,12 @@ stale-while-revalidate=300`；分页 cursor。
 > 排障。商城对每个 `release_version.sforum_version_constraint` 做 Masterminds 约束求值，
 > **不做版本等值比较**（关闭 A7）。
 > - `sforum` 缺失或非法 → `compatibility=unknown`，不过滤，返回全部并标「兼容性未校验」。
-> - `sforum` 有效 → 默认只返回「至少一个 published 版本满足约束、且有该 `os/arch` 资产」的
->   产品；`compat=all` 返回全部并逐版本标 `compatible`。
-> - `sforumBuild` 以 `dev` 开头 → 额外标 `estimated=true`（按 `1.0.0` 估算）；文案只能写
->   「按开发版估算」，不许写「兼容」。
+> - `sforum` 有效且**非** dev 构建 → 默认只返回「至少一个 published 版本满足约束、且有该
+>   `os/arch` 资产」的产品；dev 构建默认 `compat=all`（2026-10-26 更新，见 §7.3.8）；
+>   `compat=all` 返回全部并逐版本标 `compatible`。
+> - `sforumBuild` 以 `dev` 开头 → 额外标 `estimated=true`，基准是宿主派生版本；只有没报
+>   `sforum` 的老宿主才回落 `1.0.0`（2026-10-26 更新，见 §7.3.8）。文案只能写「按开发版
+>   估算」，不许写「兼容」。
 > - 清单里的 `sforumVersion` 非法 → 该版本 `needs_attention`，不进目录、不参与兼容判断。
 > - HTTP 缓存：ETag 必须包含 `sforum` 与 `os/arch/channel/compat`，否则会把一个论坛的兼容
 >   结果缓存给另一个论坛。
@@ -466,6 +469,15 @@ stale-while-revalidate=300`；分页 cursor。
 > userinfo）+ `client_id` 启动校验；仪表盘列表 N+1 消除；审核台 GitHub Actions 提示（§7.4
 > 第 25 条）；插件管理页 en-US（§7.5 第 15 条）。全量 **310 pass / 32 files**、`tsc` 干净、
 > 生产构建通过、宿主三闸全绿。计划状态仍为 `active`，**转 `completed` 需人工确认**。
+>
+> **2026-10-26 管理页三项**：更新说明改服务端渲染（`ReleaseVersion.notesHtml`，复用 README 的
+> 渲染器与白名单）、`ProductSummary.owner` 换成结构化 `author`、安装条加门禁
+> （每版本 `installedRelation`）。`bun test` **784 pass / 66 files**、typecheck 干净、插件
+> **128 pass**、`go test`/`vet` 绿、宿主 validate/test/brand/package 四闸全绿、真机
+> 1633×810 + 390×844 验收。§7.5 第 17 条的体积预算改为**看发布产物**：`dist/catalog.css`
+> 18,123 B、`dist/catalog.mjs` 52,662 B（源码 CSS 23,322 B，不再作为判据）。
+> 同日晚间补丁：门禁阻断态去掉「去 core 卸载」按钮（破坏性动作不进目录手势路径）；
+> `author.profileUrl` 上线，作者条里的 `@用户名` 链到论坛个人主页（`<issuer>/u/<username>`）。
 
 ### 7.1 S1 验收（2026-10-24，已通过）
 
@@ -550,12 +562,27 @@ S3 全部读路径来自真实 PostgreSQL + Drizzle 迁移；GitHub 取包用 fa
    过滤**（`total` 与不传 `sforum` 时一致）。但 `os`/`arch` 是**独立轴**：宿主总是知道自己
    的 GOOS/GOARCH，所以给了平台参数时仍按「至少一个可见版本有该平台资产」过滤。
    `compat=all` 时逐条标 `compatible|incompatible|unknown`。
-8. `sforum` 有效 → 默认 `compat=compatible` 过滤：产品至少有一个可见版本满足约束
-   （Masterminds 语义；`,` 归一成空格后按 semver range 求值，求值失败按非法约束处理）；
-   给了 `os`/`arch` 时还要求该版本有该平台资产。`any` 是通配符而不是字面平台：主题按
-   §5.5 检测成 `any/any`，请求 `linux/amd64` 时必须仍然命中，否则平台筛选会把所有主题筛没。
-9. `sforumBuild` 以 `dev` 开头 → `estimated=true`；`sforum` 缺失/非法时按 `1.0.0` 估算。
-   文案只能是「按开发版估算」。
+8. `sforum` 有效时的默认过滤口径（**2026-10-26 更新**，见 §10.2 Q6 指针）：
+   - 宿主是 dev 构建（`sforumBuild` 以 `dev` 开头）→ 默认 `compat=all`，**不过滤**。dev 的
+     版本号只是宿主派生值（git tag 派生；没报版本的老宿主回落 `1.0.0`），按它过滤会产生
+     假阴性；
+   - 其余有效宿主 → 默认 `compat=compatible`：产品至少有一个可见版本满足约束（Masterminds
+     语义；`,` 归一成空格后按 semver range 求值，求值失败按非法约束处理）；
+   - 显式 `compat` 始终优先，`compatible` / `all` 照传照用，非法值 400；
+   - 响应回显本次实际生效的口径：`CatalogPage.compat`（可选字段，旧客户端忽略即可）。
+
+   `compatible` 口径下，给了 `os`/`arch` 时还要求该版本有该平台资产。`any` 是通配符而不是
+   字面平台：主题按 §5.5 检测成 `any/any`，请求 `linux/amd64` 时必须仍然命中，否则平台筛选
+   会把所有主题筛没。
+
+   预发布 core 的约束求值必须与 core 对齐，**不是纯 node-semver 默认行为**：组内任一比较符
+   带预发布时整组按预发布比较（组级 `includePrerelease`，对应 Masterminds 的 `containsPre`），
+   仍不满足再用 `major.minor.patch` 基线重试一次（对应 `CheckSForumVersion` 的 `releaseBase`）。
+   只按 node-semver 默认行为求值会把 core 能装的包藏起来 —— `>=3.0.12-alpha.7` 对
+   `3.0.13-alpha.2` 就是一例。
+9. `sforumBuild` 以 `dev` 开头 → `estimated=true`；判定基准是宿主报告的派生版本（git tag
+   派生），只有 `sforum` 缺失/非法（老宿主）时才回落 `1.0.0` 估算。文案只能是「按开发版
+   估算」。
 10. `sforumVersion` 非法的版本不参与兼容判断、不出现在 releases/assets；不因此隐藏整个产品
     （还能被其它合法版本命中）。
 11. `q` 大小写不敏感匹配 name/extensionId/summary/owner，`%`/`_` 转义；`category` 精确匹配；
@@ -826,6 +853,10 @@ API 全动态）；`bun install --frozen-lockfile` 无变更。curl 全流程（
 > 管理页测试 28 → **43 pass / 439 expect**，含「全 ASCII fixture 下 en-US 渲染无 CJK」的硬证据。
 > 第 20 条仍是未验证项（本轮只改文案，CSS 字节未变）。
 
+> **2026-10-26 补充**：管理页目录改为卡片网格 + 挂 `body` 的详情弹窗（容器查询 1120/940/552 →
+> 4/3/2/1），取舍见 `decisions/2026-10-26-catalog-card-dialog.md`，证据与已知限制见
+> `sessions/2026-10-26-catalog-card-dialog-handoff.md`。
+
 **本轮过程中修正的两条宿主契约事实**（都写进了 `decisions/2026-10-24-s5-plugin-admin-page.md`
 与 §6.2）：
 1. 宿主对**任何状态码**都会把响应体按路由 `responseSchema` 校验，所以错误文档必须绑定到
@@ -977,7 +1008,7 @@ SForum 侧暴露宿主版本（§10.4）；下一轮见 §10.3。
 | A3 | §5.3 / §5.6 | token 带 nonce，`download_nonces` 却排到 v2 | **已关闭**（Q5：v1 无状态，不承诺单次） |
 | A4 | §5.5 ↔ §8 | 「同 release 同 extension id」与 monorepo 互斥 | **已关闭**（第一轮按事实 8 改写；Q3 用三层固化） |
 | A5 | §5.3 | 产品 status 与 release yanked、上游断开挤在一条 enum | **已关闭**（Q2：双轴 + yank 归 release_version） |
-| A6 | §5.3 | tag 冲突、同版本换摘要均无规则 | **已关闭**（Q4：三分支 tag 规则 + 整版不可变） |
+| A6 | §5.3 | tag 冲突、同版本换摘要均无规则 | **已关闭**（Q4：tag 只作展示、不参与版本裁决 + 整版不可变） |
 | A7 | §5.7 + 事实 9 | `sforumVersion` 是约束不是版本号 | **已关闭**（Q6：约束求值；版本暴露待 SForum 落地） |
 | A8 | §5.3 / D3 | 归属绑 `(issuer, sub)`，issuer 下线后无回收 | **已关闭**（Q1b：人工转移 + App 证据） |
 | A9 | §7 | S1/S2/S4 验收没有可判定条件 | **部分关闭**：S1/S2 细则已写（§7.1/§7.2）；S4 仍开放 |
@@ -1006,21 +1037,29 @@ issuer 下线走人工转移。**
 **Q3 数据建模 → 三层 `repo_releases → release_versions → release_assets`；channel/state/yank
 全落 `release_version`。**
 
-- 一个 tag 挂 N 扩展：tag 级元数据只存一份，单扩展失败不污染同 tag 其它扩展。
+- 一个 tag 挂 N 扩展：tag 级元数据只存一份，单扩展失败不污染同 tag 其它扩展。落地方式与取舍见
+  `knowledge/decisions/2026-10-26-single-extension-failure-isolation.md`。
 - `(release_version_id, os, arch)` 唯一；歧义候选不晋升，版本停在 `needs_attention`。
 - 代价：多一次 join 与一套 tag 级同步状态机；整仓下架是批量操作 + 审计。放弃两层（tag 元数据
   重复、etag 无处落）与「产品=仓库」（monorepo 无法表达）。
 
 **Q4 版本语义 → 版本以 manifest 为准；允许非单调；整版不可变；预发布双信号。**
 
-- tag 三分支：版本形 `v?X.Y.Z` + 单扩展组 → 必须相等，否则 `needs_attention`；非版本形 → 不比；
-  一个 tag 多扩展组 → 不比。
+- tag 不参与版本裁决，只作展示字段：`release.tag` 只写进 `repo_releases.tag` 供界面显示，版本
+  只认清单 `version`；全仓没有 tag↔version 比较，也没有 `tag_mismatch` 错误码。理由：tag 是人
+  打的标签，让它决定发布状态等于让一次笔误卡住整次发布。曾拟三分支（版本形 `v?X.Y.Z` + 单
+  扩展组必须相等、否则 `needs_attention`；非版本形与多扩展组不比），2026-10-26 否决，与
+  `AGENTS.md`「版本以清单为准，tag 只是标签」同一口径。
 - `(product_id, version)` 未用过即可发布；`latest_stable/latest_beta` 按 semver 最大物化，
   不按发布时间。代价：排序、更新检查、`/releases/{version}` 的「最新」语义全部走 semver。
-- 发布后任何新摘要（含新增平台）→ `version_conflict`；同 tag 同摘要重投 = 幂等 no-op。
+- 发布后任何新摘要（含新增平台）→ `version_conflict`；同 tag 同摘要重投 = 幂等 no-op。代价：
+  忘打某平台要发补丁版本。
 - `is_prerelease || semver prerelease` → `channel=beta`；`is_draft` 不入库。
-- 派生：拒 `+build`（build metadata 不参与优先级，会让「最大版本」不唯一）；不 strip `v` 前缀。
-  代价：忘打某平台要发补丁版本。
+- 派生：**接受** `+build`，与宿主清单校验对齐（`format: semver`，santhosh-tekuri
+  `validateSemver`）—— 商城拒掉它等于挡下宿主本来能装的包。代价：仅 build metadata 不同的版本
+  （`1.2.3+a` / `1.2.3+b`）semver 优先级相等，`maxVersion` 用 `semver.gt` 比较时两个方向都是
+  `false`，`latest_*` 落到 `candidates.find(...)` 的**行序首个命中**，并列裁决**未定义**（已知
+  缺陷，不是设计；2026-10-26 记录，是否改代码未定）。`v` 前缀不 strip、直接拒。
 
 **Q5 下载 token → 30 分钟、多用途、绑 sha256；不承诺单次；插件走 JSON 签发。**
 
@@ -1041,6 +1080,10 @@ issuer 下线走人工转移。**
   缺字段时按 unknown 处理。
 - 过滤：已知版本默认仅兼容、可切全部；未知/非法不过滤 + 未校验徽标；dev 构建标「按开发版
   估算」；约束求值取代等值比较（关闭 A7）。
+- **2026-10-26 指针（不改上面这条结论）**：dev 的 `coreVersion` 已由 `apps/api/version` 从
+  git tag 派生，所以 dev 的判定基准是「宿主派生版本」，不再是固定 `1.0.0` —— 只有没报
+  `sforum` 的老宿主才回落 `1.0.0`。同时 dev 构建默认 `compat=all`（不再默认过滤），预发布
+  core 的求值按 core 的 `releaseBase` 对齐。现行口径以 §7.3.8 为准。
 - 代价：SForum 侧要改 host API 契约与文档，并推翻伴生计划 D9；商城多一个 ETag 维度。
 - 放弃：只暴露 `Current`（dev 字符串不能用于约束匹配）；env（只对新进程生效）；新命令
   `sforum.host.info@1`（命令目录、权限、契约、测试全要加，最重）。

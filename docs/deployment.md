@@ -237,18 +237,29 @@ bun run settings:public-url -- --clear           # 删行，回到 STORE_PUBLIC_
 ```bash
 bun install --frozen-lockfile
 bun run db:migrate                 # 需要 DATABASE_URL（.env.local）
-cd service && bun --bun next build
-bun --bun next start -p 4000       # 或交给进程管理器（默认端口已由 package.json 固定为 4000）
+bun run build
+bun run start                      # Next + release worker，一条命令两个进程
 curl -s http://127.0.0.1:4000/api/health   # {"status":"ok",...}
 ```
 
-worker 必须单独起一个进程（同镜像、同环境变量）：
+### web 与 worker：一条命令，两个进程
 
-```bash
-bun run worker
-```
+`bun run dev` 与 `bun run start` 都通过 `bun run --parallel --no-orphans` 同时启动 Next 与
+release worker：
 
-**没有 worker**，GitHub webhook 只会入队不处理，release 永远不会同步。
+| 命令 | 起什么 |
+| --- | --- |
+| `bun run dev` | Next dev + worker（development） |
+| `bun run start` | Next start + worker（worker 为 production） |
+| `bun run start:web` | 只起 web（多副本 / 排障） |
+| `bun run worker` / `bun run worker:prod` | 只起 worker |
+
+`--parallel` 的输出带 `dev:web |` / `worker |` 前缀；任一子进程退出，另一个会被终止，命令整体
+退出。`--no-orphans` 保证父进程死掉时子孙进程一起清理。**没有 worker** 时，GitHub webhook 只会
+入队不处理，release 永远不会同步；合并后不会再出现“只起了 web”的情况。
+
+多副本生产不要在每个副本上跑 `start`（每个副本都会起一个 worker）；用 `start:web` + 一个
+`worker`。合并的代价是 web 与 worker 同生共死；需要独立重启时也用 `start:web` + `worker`。
 
 ### 初始化顺序（2026-10-25 起，比之前多两步）
 
