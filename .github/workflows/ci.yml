@@ -71,13 +71,16 @@ jobs:
       - uses: actions/checkout@v4
 
       # The plugin SDK is not published as a Go module; pin the SForum commit that
-      # landed the host-mediated install action (10c2b21e8) and build against it.
+      # landed the host-mediated install action and build against it. Pinned by
+      # full 40-char SHA to the v3.0.17 commit: a short SHA is not a valid fetch
+      # refspec, and a tag can be force-moved, which would silently build a
+      # different core.
       - name: Checkout SForum (SDK)
         uses: actions/checkout@v4
         with:
           repository: zhuchunshu/SForum
           path: SForum
-          ref: 10c2b21e8
+          ref: 5a4ce5eaf341ba0825fdb6ffca87e63be88d3250 # v3.0.17
 
       - uses: actions/setup-go@v5
         with:
