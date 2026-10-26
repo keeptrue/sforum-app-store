@@ -220,7 +220,7 @@
       "timeoutMs": 15000
     }
   ],
-  "sforumVersion": ">=1.0.0",
+  "sforumVersion": ">=3.0.17",
   "type": "plugin",
   "url": "https://github.com/zhuchunshu/sforum-app-store",
   "version": "0.1.0"
