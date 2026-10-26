@@ -81,7 +81,7 @@ work ("管理页插件卡、商城详情页") for later. This is that later.
 
 ## 修订（2026-10-25 当日）：目录是**包目录**，不是仓库根
 
-第一版把路径写死成仓库根的 `brand/icon.png`。真实仓库 `zhuchunshu/sforum-oauth2-provider`
+第一版把路径写死成仓库根的 `brand/icon.png`。真实仓库 `keeptrue/sforum-oauth2-provider`
 的品牌图在 `plugins/sforum-oauth2-provider/brand/` 下（宿主契约说的是「包内 `brand/`」），
 于是根路径 404、图标悄悄退回社交预览，分享卡直接报缺失/报错 —— 用户看到的就是「文件明明
 在，商城说没有」。

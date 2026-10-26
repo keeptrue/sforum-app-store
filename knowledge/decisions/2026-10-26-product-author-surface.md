@@ -54,7 +54,7 @@ Related: `2026-10-25-github-only-product-identity.md`（产品身份只来自 Gi
 - **保留 `owner` 并新增 `author`。** 两个字段表达同一件事，消费端一定会有一个用错；
   仓库契约是同仓同发布，不需要兼容窗口。
 - **直接用清单里的 `author`（`manifest.author.name/url`）。** 那是**包声明的作者**
-  （例如 `SForum` / `https://github.com/zhuchunshu/sforum`），与「这个产品是谁在维护」不是
+  （例如 `SForum` / `https://github.com/keeptrue/sforum`），与「这个产品是谁在维护」不是
   一回事。商城公开页把两者都列出来（`维护者` / `清单作者`），放进一个弹窗会变成两个「作者」。
 - **作者条放弹窗头部。** 头部要多一行、窄屏（390px）下扩展 ID + 徽标 + 作者行会挤成两行，
   而且已安装 / 可更新徽标的判决位会被稀释。

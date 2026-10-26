@@ -444,7 +444,7 @@ export function GithubAppForm({
               id={id("owner")}
               value={owner}
               onChange={(event) => setOwner(event.target.value)}
-              placeholder="例如 zhuchunshu"
+              placeholder="例如 keeptrue"
               spellCheck={false}
               className="font-mono"
             />

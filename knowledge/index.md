@@ -297,7 +297,7 @@ slug 一致）、私钥先加后删的轮换、`github_config_unreadable` 与「
 | 依赖 | 位置 | 用途 |
 | --- | --- | --- |
 | SForum 安装交接 | SForum `knowledge/decisions/2026-10-24-admin-page-host-action.md`（落地 `10c2b21e8`） | 页面级宿主动作（`hostActions` + `bridge.installExtension`）的唯一来源；旧的「安装命令/意图表」设计已被否决 |
-| SForum OAuth2 提供方 | 仓 `github.com/zhuchunshu/sforum-oauth2-provider` | 登录端点、CSRF、userinfo、scope |
+| SForum OAuth2 提供方 | 仓 `github.com/keeptrue/sforum-oauth2-provider` | 登录端点、CSRF、userinfo、scope |
 | Manifest V3 schema | SForum `apps/api/app/Support/ExtensionManifest/schemas/manifest-v3.schema.json` | 清单校验：逐字节 vendor 到 `service/src/lib/detection/schema/`，`manifest-v3.lock.json` 钉 commit + sha256，`manifest:sync` / `manifest:check` 维护（见 `decisions/2026-10-25-manifest-contract-alignment.md`） |
 | 宿主能力目录 | SForum `docs/extensions/catalogs/capabilities.md`（由 `go run ./cmd/sforum extension docs generate` 生成，源 `app/Support/Capabilities/catalog.go`） | 能力 key → 中文/英文标签、risk 等级、描述的**唯一**来源；商城只 vendor 展示副本（`plans/2026-10-25-host-capability-catalog.md`），不自己分级 |
 
@@ -315,6 +315,10 @@ slug 一致）、私钥先加后删的轮换、`github_config_unreadable` 与「
 - 一个 ZIP 只含一个扩展，清单必须在 ZIP 根；`sforumVersion` 是 semver 约束（含 `!=`）。
 - 清单结构只认 vendored 宿主 schema；语义层只补宿主必拒的少量规则，`manifest:conformance`
   用同一批 fixture 与宿主校验器对拍。
+- **GitHub 账号已从 `zhuchunshu` 改名为 `keeptrue`**：仓库 URL 与 Go 模块路径都跟新名
+  （上游 `apps/api/go.mod` 已改成 `github.com/keeptrue/sforum/apps/api`，提交 `e753c72b0`；
+  本仓 `require`/`replace`/import 与两份 lock 已同步），论坛用户名 `zhuchunshu` 是另一回事、仍保持。
+  判据与两波经过见 `decisions/2026-10-26-github-account-rename.md`。
 
 详见 `../AGENTS.md` 与任务书 §2。
 

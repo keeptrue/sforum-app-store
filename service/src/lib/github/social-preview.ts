@@ -24,7 +24,7 @@ export const SOCIAL_PREVIEW_HOST = "repository-images.githubusercontent.com";
 
 const MAX_HTML_BYTES = 2 * 1024 * 1024;
 const DEFAULT_TIMEOUT_MS = 10_000;
-const USER_AGENT = "sforum-app-store (+https://github.com/zhuchunshu/sforum)";
+const USER_AGENT = "sforum-app-store (+https://github.com/keeptrue/sforum)";
 
 /** `owner/repo`, the shape GitHub uses for `full_name`. */
 const FULL_NAME = /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\/[A-Za-z0-9._-]{1,100}$/;

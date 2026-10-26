@@ -1,10 +1,10 @@
-module github.com/zhuchunshu/sforum-app-store/plugins/sforum.store/backend
+module github.com/keeptrue/sforum-app-store/plugins/sforum.store/backend
 
 go 1.26.10
 
 require (
 	github.com/Masterminds/semver/v3 v3.5.0
-	github.com/zhuchunshu/sforum/apps/api v0.0.0
+	github.com/keeptrue/sforum/apps/api v0.0.0
 	google.golang.org/protobuf v1.36.11
 )
 
@@ -28,4 +28,4 @@ require (
 // SForum 的 apps/api 尚未作为 Go module 发布，插件用本地检出解析 SDK。
 // 默认约定：本仓库与 SForum 检出同级（Code/github/…）；CI 用
 // `go mod edit -replace` 覆盖为它自己的检出路径。
-replace github.com/zhuchunshu/sforum/apps/api => ../../../../../SForum/apps/api
+replace github.com/keeptrue/sforum/apps/api => ../../../../../SForum/apps/api

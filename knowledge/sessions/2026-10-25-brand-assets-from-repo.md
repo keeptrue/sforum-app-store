@@ -85,7 +85,8 @@
 
 ## 修订：品牌目录在包目录里（当日 bug 修复）
 
-上线到 `test-sforum-app-store.dalao.me` 后立刻暴露：`zhuchunshu/sforum-oauth2-provider` 的文件在
+上线到 `test-sforum-app-store.dalao.me` 后立刻暴露：`zhuchunshu/sforum-oauth2-provider`（该账号已改名
+`keeptrue`，旧路径依赖 GitHub 301 仍有效）的文件在
 `plugins/sforum-oauth2-provider/brand/`，而第一版只读仓库根的 `brand/`，于是根路径 404 →
 图标退回社交预览、分享卡报错。宿主契约写的是**包内** `brand/`，包目录可能是仓库根，也可能是
 `plugins/<name>/`。

@@ -70,17 +70,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # The plugin SDK is not published as a Go module; pin the SForum commit that
-      # landed the host-mediated install action and build against it. Pinned by
-      # full 40-char SHA to the v3.0.17 commit: a short SHA is not a valid fetch
-      # refspec, and a tag can be force-moved, which would silently build a
-      # different core.
+      # The plugin SDK is not published as a Go module; pin the SForum commit we build
+      # against. Always a full 40-char SHA: a short SHA is not a valid fetch refspec, and
+      # a tag can be force-moved, which would silently build a different core.
+      #
+      # This pin is the module-path rename commit (zhuchunshu -> keeptrue), not a release
+      # tag: from it on `apps/api/go.mod` declares `module github.com/keeptrue/sforum/apps/api`
+      # and the plugin's `require` follows that path. An earlier tag such as v3.0.18 still
+      # declares the old module path, so the replace below would resolve to a package that
+      # declares a different path and the build fails before compiling anything — being on
+      # the same history does not make it usable.
+      # Constraint: actions/checkout fetches by SHA and only sees commits that exist on the
+      # remote. Satisfied — the commit is already pushed; d1153068c has it as its parent.
       - name: Checkout SForum (SDK)
         uses: actions/checkout@v4
         with:
-          repository: zhuchunshu/SForum
+          repository: keeptrue/SForum
           path: SForum
-          ref: 26d808403843ffd03445d31c5d72e672d261ebf7 # v3.0.18
+          ref: e753c72b06e45da50d25326c049c51312f887046 # 模块路径改名提交，非 release tag
 
       - uses: actions/setup-go@v5
         with:
@@ -95,7 +102,7 @@ jobs:
       # checked-in replace path is overridden here instead of being committed twice.
       - name: Point the SDK at the SForum checkout
         working-directory: plugin/plugins/sforum.store/backend
-        run: go mod edit -replace github.com/zhuchunshu/sforum/apps/api=../../../../SForum/apps/api
+        run: go mod edit -replace github.com/keeptrue/sforum/apps/api=../../../../SForum/apps/api
 
       - name: Test plugin backend
         working-directory: plugin/plugins/sforum.store/backend

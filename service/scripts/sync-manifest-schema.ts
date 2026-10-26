@@ -103,7 +103,7 @@ function sync(sforumRoot: string): void {
     lockPath,
     `${JSON.stringify(
       {
-        upstream: "github.com/zhuchunshu/sforum",
+        upstream: "github.com/keeptrue/sforum",
         source: SCHEMA_RELATIVE,
         commit,
         sha256: digest,

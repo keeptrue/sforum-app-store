@@ -26,7 +26,7 @@ const targetDir = join(repoRoot, "service/src/lib/capabilities");
 const catalogPath = join(targetDir, "catalog.json");
 const lockPath = join(targetDir, "catalog.lock.json");
 
-const UPSTREAM = "github.com/zhuchunshu/sforum";
+const UPSTREAM = "github.com/keeptrue/sforum";
 const DOC_RELATIVE = "docs/extensions/catalogs/capabilities.md";
 const EXPECTED_HEADER = ["Key", "Risk", "Label (EN)", "Label (ZH)", "Description"];
 const RISK_VALUES = ["low", "medium", "high"] as const;

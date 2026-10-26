@@ -57,8 +57,13 @@ SForum 应用商城：一个**独立服务端**加一个 **SForum 插件**，让
   - README：`markdown-it` + `sanitize-html` 渲染成 HTML（`lib/readme/`），HTML 是唯一对外表示。
 - `plugin/` —— 仓库根即 SForum 的 `EXTERNAL_EXTENSION_ROOTS` 源根，扩展包在
   `plugin/plugins/sforum.store/`。
-  - Go 后端 `require github.com/zhuchunshu/sforum/apps/api v0.0.0` + 本地 `replace`；
+  - Go 后端 `require github.com/keeptrue/sforum/apps/api v0.0.0` + 本地 `replace`；
     CI 用 `go mod edit -replace` 指向 SForum 检出。
+    **这个模块路径随上游一起翻了**（`zhuchunshu` → `keeptrue`，上游 `e753c72b0` 改的
+    `apps/api/go.mod:1`）：写 `keeptrue` 才是对的，见到 `github.com/zhuchunshu/sforum/apps/api`
+    一律按漏改处理 —— 它必须与 `ci.yml` 的 SForum checkout `ref` 同批移动。
+    `*.lock.json` 的 `upstream` 不要手改，走 `bun run capabilities:sync` / `manifest:sync`。
+    两波经过与判据见 `knowledge/decisions/2026-10-26-github-account-rename.md`。
   - 管理页是**预构建** ESM/CSS（Admin Micro-frontend API v1），构建产物进包，源码不进运行时。
 - `contracts/store-api.yaml` —— 唯一跨产物契约。
 - `knowledge/` —— 项目记忆。`plans/` 任务书、`decisions/` 决策记录、`sessions/` 热交接。

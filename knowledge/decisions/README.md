@@ -97,3 +97,9 @@ Date: YYYY-MM-DD
   600 s、`expireInSeconds` 1800），不写 issue 也不烧版本号；不可重试才落 `asset_failed`。
   版本行 + 审核事件 + 资产行同事务，`create_queue` 的 `ON CONFLICT DO NOTHING` 靠 `updateQueue`
   兜住，失败的 `getBoss()` 不再被缓存。
+- `2026-10-26-github-account-rename.md` —— GitHub 账号 `zhuchunshu` → `keeptrue` 的四分法：
+  上游模块路径（a1）、本仓自建模块（a2）、仓库 URL（b）、论坛用户名（c），判据是「谁拥有这个
+  标识符 + 有没有外部消费者」。**第二波（当日）上游自己改了 `apps/api/go.mod` 并推送
+  `e753c72b0`，a1 从「保持」翻成「改」**（连锁六处同批，CI pin 必须一起移动）；a2/b 不变，
+  c 仍然不动。`*.lock.json` 的 `upstream` 只经 `capabilities:sync` / `manifest:sync` 更新，不手改
+  （check 的 sha256 不覆盖它）。历史交接不改正文只加括注，旧 URL 靠 GitHub 301；镜像命名空间另计。
