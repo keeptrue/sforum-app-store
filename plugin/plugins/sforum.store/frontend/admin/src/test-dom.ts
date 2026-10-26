@@ -4,7 +4,8 @@
 // so this shim implements exactly the surface `catalog.ts` touches: element creation,
 // class list, attributes/dataset, text, append/replace/remove, listeners with
 // bubbling, plus a tiny serializer for harness output. It is NOT a browser: layout,
-// CSS, focus and disabled-click semantics are not modelled.
+// CSS and disabled-click semantics are not modelled; focus is only a minimal
+// `document.activeElement` + `focus` event shim.
 
 export type ShimEvent = {
   type: string;
@@ -252,6 +253,17 @@ export class ShimElement extends BaseNode {
     }
     return result;
   }
+
+  /**
+   * Minimal focus: records `document.activeElement` and fires the `focus` listener.
+   * Blur/focusin/focusout and tab-order semantics are not modelled.
+   */
+  focus(): void {
+    const owner = activeDocument;
+    if (!owner) return;
+    owner.activeElement = this;
+    this.dispatchEvent({ type: "focus" });
+  }
 }
 
 /** Supports `tag`, `.class`, `#id`, `[attr]`, `[attr="value"]` and their compounds. */
@@ -277,16 +289,28 @@ export function matches(element: ShimElement, selector: string): boolean {
   return consumed === selector.length && consumed > 0;
 }
 
+/** The document `ShimElement.focus()` writes into; the last one created wins. */
+let activeDocument: ShimDocument | null = null;
+
 export type ShimDocument = {
   createElement(tagName: string): ShimElement;
   createTextNode(value: string): ShimText;
+  /** Mount point for body-level overlays, such as the catalog dialog. */
+  body: ShimElement;
+  /** Mirrors the browser property: `body` until something else is focused. */
+  activeElement: ShimElement | null;
 };
 
 export function createDocument(): ShimDocument {
-  return {
+  const body = new ShimElement("body");
+  const documentShim: ShimDocument = {
     createElement: (tagName: string) => new ShimElement(tagName),
     createTextNode: (value: string) => new ShimText(value),
+    body,
+    activeElement: body,
   };
+  activeDocument = documentShim;
+  return documentShim;
 }
 
 /** Installs `document` on globalThis; returns the shim document. */

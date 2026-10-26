@@ -40,8 +40,8 @@ func TestCatalogForwardsHostBuildAndCompat(t *testing.T) {
 }
 
 // TestCatalogOmitsHostBuildWhenHostDidNotProvideIt 覆盖旧宿主：没有 host_build 时
-// 两个版本参数都不出现，目录保持 unknown；compat 仍按缺省 compatible 发送，上游在
-// 拿不到版本时不做过滤。
+// 两个版本参数都不出现，目录保持 unknown；compat 缺省同样不转发 —— 默认口径由商城
+// 按宿主决定，插件不在这里补 compatible。
 func TestCatalogOmitsHostBuildWhenHostDidNotProvideIt(t *testing.T) {
 	fake := newFakeUpstream(t, func(w http.ResponseWriter, r *http.Request, call int) {
 		writeUpstreamJSON(t, w, http.StatusOK, catalogFixture(), nil)
@@ -57,8 +57,8 @@ func TestCatalogOmitsHostBuildWhenHostDidNotProvideIt(t *testing.T) {
 			t.Errorf("upstream query must not carry %s when the host build is unknown: %v", key, call.Query)
 		}
 	}
-	if got := call.Query.Get("compat"); got != compatModeCompatible {
-		t.Errorf("upstream compat = %q, want compatible", got)
+	if call.Query.Has("compat") {
+		t.Errorf("upstream query must not carry compat when it was not requested: %v", call.Query)
 	}
 	item := arrayAt(t, values, "items")[0].(map[string]any)
 	if compat := objectAt(t, item, "compatibility"); compat["status"] != compatibilityUnknown {
@@ -66,14 +66,15 @@ func TestCatalogOmitsHostBuildWhenHostDidNotProvideIt(t *testing.T) {
 	}
 }
 
-// TestCatalogCompatModes 覆盖 compat 的合法取值：缺省 compatible，显式值原样转发。
+// TestCatalogCompatModes 覆盖 compat 的合法取值：缺省不转发（交给商城按宿主决定），
+// 显式值原样转发。
 func TestCatalogCompatModes(t *testing.T) {
 	cases := []struct {
 		name  string
 		param string
-		want  string
+		want  string // 空串表示上游查询里不应出现 compat
 	}{
-		{name: "absent defaults to compatible", param: "", want: compatModeCompatible},
+		{name: "absent leaves the store default alone", param: "", want: ""},
 		{name: "explicit compatible", param: "compatible", want: compatModeCompatible},
 		{name: "explicit all", param: compatModeAll, want: compatModeAll},
 		{name: "surrounding spaces are trimmed", param: " all ", want: compatModeAll},
@@ -90,10 +91,38 @@ func TestCatalogCompatModes(t *testing.T) {
 				params["compat"] = testCase.param
 			}
 			assertStatus(t, invokeRoute(t, server, routeCatalogID, params, nil), http.StatusOK)
-			if got := fake.last(t).Query.Get("compat"); got != testCase.want {
+			query := fake.last(t).Query
+			if got := query.Get("compat"); got != testCase.want {
 				t.Fatalf("upstream compat = %q, want %q", got, testCase.want)
 			}
+			if testCase.want == "" && query.Has("compat") {
+				t.Fatalf("upstream must not carry compat when the caller left it unset: %v", query)
+			}
 		})
+	}
+}
+
+// TestCatalogForwardsCompatEcho：商城回显本次实际生效的口径时原样透出 compat；
+// 老商城不回显就不写这个键，页面按 compatibility.estimated 推断。
+func TestCatalogForwardsCompatEcho(t *testing.T) {
+	withEcho := newFakeUpstream(t, func(w http.ResponseWriter, r *http.Request, call int) {
+		page := catalogFixture()
+		page["compat"] = compatModeAll
+		writeUpstreamJSON(t, w, http.StatusOK, page, nil)
+	})
+	server := newBoundStoreServer(t, withEcho, storeSettings{Channel: channelStable})
+	values := assertJSONDocument(t, invokeRoute(t, server, routeCatalogID, nil, nil), schemaCatalogResponse)
+	if got := values["compat"]; got != compatModeAll {
+		t.Errorf("catalog compat echo = %v, want all", got)
+	}
+
+	withoutEcho := newFakeUpstream(t, func(w http.ResponseWriter, r *http.Request, call int) {
+		writeUpstreamJSON(t, w, http.StatusOK, catalogFixture(), nil)
+	})
+	server = newBoundStoreServer(t, withoutEcho, storeSettings{Channel: channelStable})
+	values = assertJSONDocument(t, invokeRoute(t, server, routeCatalogID, nil, nil), schemaCatalogResponse)
+	if _, exists := values["compat"]; exists {
+		t.Errorf("catalog must not invent a compat echo: %v", values["compat"])
 	}
 }
 
@@ -362,4 +391,83 @@ func TestProductMarksInstalledState(t *testing.T) {
 			t.Fatalf("installed = %v, want null", got)
 		}
 	})
+}
+
+// installedRelation 是安装门禁的唯一依据：页面不再自己比版本，所以三个版本的相对关系
+// 必须由后端一次算清，且只有清单可用时才写这个键。
+func TestProductMarksInstalledRelationPerRelease(t *testing.T) {
+	fixture := func() map[string]any {
+		payload := productFixture()
+		payload["latestVersion"] = "3.0.0"
+		payload["releases"] = []any{
+			releaseFixture("3.0.0"),
+			releaseFixture("2.0.0"),
+			releaseFixture("1.5.0"),
+		}
+		return payload
+	}
+
+	t.Run("installed 2.0.0", func(t *testing.T) {
+		fake := newFakeUpstream(t, func(w http.ResponseWriter, r *http.Request, call int) {
+			writeUpstreamJSON(t, w, http.StatusOK, fixture(), nil)
+		})
+		server := newBoundStoreServer(t, fake, storeSettings{Channel: channelStable})
+		server.inventoryFetch = newFakeInventory().page(0, 0,
+			installedRow("sforum.plugin.demo", "2.0.0", "enabled"),
+		).fetch
+
+		values := assertJSONDocument(t, invokeRoute(t, server, routeProductID,
+			map[string]string{"slug": "demo-plugin"}, nil), schemaProductResponse)
+		releases := arrayAt(t, objectAt(t, values, "product"), "releases")
+		got := map[string]any{}
+		for _, entry := range releases {
+			release := entry.(map[string]any)
+			got[release["version"].(string)] = release["installedRelation"]
+		}
+		want := map[string]any{
+			"3.0.0": relationNewer,
+			"2.0.0": relationSame,
+			"1.5.0": relationOlder,
+		}
+		for version, relation := range want {
+			if got[version] != relation {
+				t.Errorf("installedRelation(%s) = %v, want %v", version, got[version], relation)
+			}
+		}
+	})
+
+	t.Run("inventory unavailable", func(t *testing.T) {
+		fake := newFakeUpstream(t, func(w http.ResponseWriter, r *http.Request, call int) {
+			writeUpstreamJSON(t, w, http.StatusOK, fixture(), nil)
+		})
+		server := newBoundStoreServer(t, fake, storeSettings{Channel: channelStable})
+		server.inventoryFetch = newFakeInventory().fail(0, errInventoryUnavailable).fetch
+
+		values := assertJSONDocument(t, invokeRoute(t, server, routeProductID,
+			map[string]string{"slug": "demo-plugin"}, nil), schemaProductResponse)
+		releases := arrayAt(t, objectAt(t, values, "product"), "releases")
+		for _, entry := range releases {
+			release := entry.(map[string]any)
+			if _, exists := release["installedRelation"]; exists {
+				t.Errorf("release %v carries installedRelation without inventory", release["version"])
+			}
+		}
+	})
+}
+
+// releaseFixture 是最小可映射版本：只填映射函数要求存在的字段。
+func releaseFixture(version string) map[string]any {
+	return map[string]any{
+		"version":       version,
+		"channel":       channelStable,
+		"publishedAt":   "2026-10-20T10:00:00Z",
+		"sforumVersion": ">=1.0.0",
+		"status":        "published",
+		"assets": []any{
+			map[string]any{
+				"os": "linux", "arch": "amd64", "filename": version + ".zip",
+				"size": 1024, "sha256": strings.Repeat("b", 64),
+			},
+		},
+	}
 }

@@ -8,12 +8,17 @@ export function el(tag: string, className?: string, text?: string): HTMLElement 
   return node;
 }
 
-export function badge(
-  label: string,
-  tone: "neutral" | "ok" | "bad" | "warn" | "muted" | "accent" = "neutral",
-): HTMLElement {
+export type BadgeTone = "neutral" | "ok" | "bad" | "warn" | "muted" | "accent";
+
+/**
+ * `title` 是悬停时能读到的完整值（例如被截断的约束、`+N` 里没显示的那些徽标），
+ * 视觉上仍只占一枚药丸。
+ */
+export function badge(label: string, tone: BadgeTone = "neutral", title?: string): HTMLElement {
   const className = tone === "neutral" ? "sfstore__badge" : `sfstore__badge sfstore__badge--${tone}`;
-  return el("span", className, label);
+  const node = el("span", className, label);
+  if (title) node.title = title;
+  return node;
 }
 
 export function mono(value: string, fullValue?: string): HTMLElement {

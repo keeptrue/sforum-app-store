@@ -155,6 +155,10 @@ type catalogQuery struct {
 	// Compat 是兼容过滤强度（compatible / all）。上游只在拿到宿主版本时才真的
 	// 过滤，所以版本未知时发它不改变结果，也不会误删条目。
 	Compat string
+	// PlatformAll 为 true 时把架构维度放宽成 all：管理员关掉「只看支持当前架构」
+	// 时才会发生。为 false 时不发 platform 参数——`platform=strict` 与省略等价，
+	// 多发一个参数只会让上游 ETag 抖动。
+	PlatformAll bool
 }
 
 // hostBuild 是宿主在 protocol v2 握手时冻结的构建身份（SDK: Server.HostBuild）。
@@ -217,6 +221,11 @@ func (q catalogQuery) values() url.Values {
 	setHostVersion(values, hostBuild{CoreVersion: q.SForum, BuildVersion: q.SForumBuild})
 	if q.Compat != "" {
 		values.Set("compat", q.Compat)
+	}
+	// 架构维度：只有显式放宽才发。os/arch 恒发（上面两行），因为上游的
+	// compatibility 判定要用它们；platform 只管「列表要不要藏掉跑不起来的包」。
+	if q.PlatformAll {
+		values.Set("platform", platformModeAll)
 	}
 	return values
 }

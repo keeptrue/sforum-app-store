@@ -19,7 +19,8 @@
             "kind",
             "summary",
             "readme",
-            "releases"
+            "releases",
+            "latestPlatforms"
           ],
           "properties": {
             "slug": {
@@ -130,7 +131,93 @@
             "updateAvailable": {
               "type": "boolean"
             },
+            "author": {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "username",
+                    "displayName",
+                    "avatarUrl",
+                    "github",
+                    "profileUrl"
+                  ],
+                  "properties": {
+                    "username": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "displayName": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "avatarUrl": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "profileUrl": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "github": {
+                      "oneOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "login",
+                            "url"
+                          ],
+                          "properties": {
+                            "login": {
+                              "type": "string"
+                            },
+                            "url": {
+                              "type": "string"
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
+            },
             "platforms": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "os",
+                  "arch"
+                ],
+                "properties": {
+                  "os": {
+                    "type": "string"
+                  },
+                  "arch": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "latestPlatforms": {
               "type": "array",
               "items": {
                 "type": "object",
@@ -181,10 +268,19 @@
                   "status": {
                     "type": "string"
                   },
+                  "installedRelation": {
+                    "type": "string"
+                  },
                   "digest": {
                     "type": "string"
                   },
                   "notes": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "notesHtml": {
                     "type": [
                       "string",
                       "null"

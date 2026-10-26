@@ -5,11 +5,16 @@
 //   产品图标是商城的内容寻址资产，由插件后端拼成绝对地址、浏览器直连商城：
 //   `<img>` 加载失败就退回字母块，绝不显示破图。README 由商城渲染并消毒后整体注入，
 //   其中的图片属于 README 内容本身（GitHub 托管）。
-// - 安装只走宿主页面动作 `bridge.installExtension`，成功语义是「已暂存」；启用与信任在 core 完成。
+// - 安装只走宿主页面动作：宿主提供 `installAndEnableExtension` 时装完由宿主自己启用，
+//   否则退回 `installExtension`（成功语义只是「已暂存」）。启用与信任的判断永远在宿主，
+//   本页只转述宿主回报的 `outcome`，从不自己启用、不自己判定信任。
 // - 手写 ESM 拿不到 Host 图标运行时：所有按钮用文字，不用 emoji、不手绘内联 SVG。
+// - 页面标题与简介由宿主页面壳渲染；本页只负责目录、弹窗与安装条。
 
 import { createCopy } from "./copy";
+import { createDialog } from "./dialog";
 import { buttonEl, el, fieldEl, selectEl, toggleEl } from "./dom";
+import { footNodes } from "./foot";
 import {
   CORE_INSTALL_PATH,
   INSTALL_URL_PATH,
@@ -25,22 +30,33 @@ import {
   defaultPlatform,
   findRelease,
   formatDateTime,
+  installGate,
+  installGateText,
+  installFailureCode,
   installFailureText,
   installableReleases,
   parseCatalog,
   parseInstallUrl,
   parseProduct,
+  readInstallOutcome,
+  resolveAppliedCompat,
   toCatalogItemView,
   toProductView,
 } from "./logic";
-import type { ChannelChoice, CompatMode, FailureClass } from "./logic";
+import type { AppliedCompat, ChannelChoice, CompatMode, FailureClass } from "./logic";
+import { platformId, preferredRelease } from "./platform";
 import {
-  catalogRowView,
-  detailHeader,
+  DIALOG_TITLE_ID,
+  authorStrip,
+  catalogCardView,
+  catalogSkeletonCards,
+  dialogHeaderFromItem,
+  dialogHeaderFromView,
   notesBlock,
+  partialBlock,
   readmeBlock,
+  receiptBlock,
   signedBlock,
-  stagedBlock,
   stateBlock,
   trustNote,
   versionsBlock,
@@ -48,7 +64,10 @@ import {
 import type {
   CatalogItemView,
   CompatibilityDto,
+  HostInstallEnableOutcome,
+  HostInstallRequest,
   HostInstallResult,
+  InstallGate,
   InstallUrlResponseDto,
   Kind,
   PageBridge,
@@ -65,10 +84,12 @@ const SEARCH_DEBOUNCE_MS = 220;
 
 type CatalogMode = "loading" | "setup" | "error" | "ready" | "empty";
 type DetailMode = "idle" | "loading" | "setup" | "error" | "ready";
-type InstallStatus = "idle" | "running" | "staged" | "failed" | "signed";
+type InstallStatus = "idle" | "running" | "staged" | "enabled" | "partial" | "failed" | "signed";
 
 type InstallState = {
   status: InstallStatus;
+  /** 宿主回报的启用结论；null = 旧宿主（没有 enable 方法）或还没装。 */
+  outcome: HostInstallEnableOutcome | null;
   message: string;
   result: HostInstallResult | null;
   signed: InstallUrlResponseDto | null;
@@ -79,13 +100,21 @@ type State = {
   query: string;
   channel: ChannelChoice;
   category: string;
-  /** 兼容性口径：默认只看能装的；`all` 才向路由追加 `compat=all`。 */
+  /** 兼容性口径：`auto` 交给商城按宿主决定；显式模式才向路由追加 `compat`。 */
   compatMode: CompatMode;
-  page: number;
-  trail: Array<string | null>;
+  /**
+   * 当前结果集实际生效的口径（服务端回显，或 `auto` 下按 estimated 推断）。
+   * 开关勾选状态与页级说明都跟它走：开发版宿主默认显示全部时，开关必须是未勾的。
+   */
+  appliedCompat: AppliedCompat;
+  /** 目录请求在飞（首屏、筛选、刷新、加载更多都算）。 */
   loading: boolean;
+  /** 正在追加下一页：保留现有卡片，只在底部显示「正在加载…」。 */
+  appending: boolean;
   catalogMode: CatalogMode;
   errorText: string;
+  /** 加载更多失败：网格保留，错误显示在按钮上方。 */
+  appendError: string;
   items: CatalogItemView[];
   total: number;
   nextCursor: string | null;
@@ -100,12 +129,13 @@ type State = {
   product: ProductDto | null;
   view: ProductView | null;
   version: string;
+  /** 自动匹配到的平台（`defaultPlatform` 的结果）；不再由人选择，只用于签名与安装。 */
   platform: PlatformOption | null;
   install: InstallState;
 };
 
 function freshInstall(): InstallState {
-  return { status: "idle", message: "", result: null, signed: null, pending: false };
+  return { status: "idle", outcome: null, message: "", result: null, signed: null, pending: false };
 }
 
 function initialState(): State {
@@ -113,12 +143,14 @@ function initialState(): State {
     query: "",
     channel: "stable",
     category: "",
-    compatMode: "compatible",
-    page: 0,
-    trail: [null],
+    compatMode: "auto",
+    // 首屏响应落地前没有生效口径：先按「只看可安装」展示，响应会立即纠正。
+    appliedCompat: "compatible",
     loading: false,
+    appending: false,
     catalogMode: "loading",
     errorText: "",
+    appendError: "",
     items: [],
     total: 0,
     nextCursor: null,
@@ -139,7 +171,12 @@ function initialState(): State {
 
 export function mount(target: HTMLElement, bridge: PageBridge): () => void {
   if (!target || typeof target.appendChild !== "function") return () => {};
+  // 两个宿主动作各自 feature-detect：旧宿主只有 installExtension，新宿主还有
+  // installAndEnableExtension（装完由宿主自己启用，回执带 outcome）。
+  const canEnable = typeof bridge.installAndEnableExtension === "function";
   const canInstall = typeof bridge.installExtension === "function";
+  /** 只要有一种安装方式，安装条就成立；否则退回签名链接。 */
+  const canPageInstall = canInstall || canEnable;
   // Locale decides the copy table once, at mount; a missing or unknown value
   // falls back to zh-CN and never throws.
   const copy = createCopy(bridge?.locale);
@@ -149,7 +186,6 @@ export function mount(target: HTMLElement, bridge: PageBridge): () => void {
   let catalogGeneration = 0;
   let detailGeneration = 0;
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
-  let installBlock: HTMLElement | null = null;
 
   // ---------- shell ----------
 
@@ -178,69 +214,79 @@ export function mount(target: HTMLElement, bridge: PageBridge): () => void {
   // 兼容性开关：只在页级判决存在时出现。宿主没给版本（`unknown`）时后端本来就不按版本筛，
   // 开关按下去不会有任何变化，所以藏起来，由页级说明讲清楚（见 renderMeta）。
   const compatToggle = toggleEl(copy.t("compatOnlyAction"), {
-    checked: state.compatMode === "compatible",
+    checked: state.appliedCompat === "compatible",
   });
   compatToggle.label.setAttribute("data-role", "compat-toggle");
   compatToggle.label.hidden = true;
 
-  const filters = el("div", "sfstore__filters");
-  filters.append(
-    fieldEl(copy.t("searchField"), searchInput),
+  const toolbar = el("div", "sfstore__toolbar");
+  toolbar.append(
+    fieldEl(copy.t("searchField"), searchInput, "sfstore__field--search"),
     fieldEl(copy.t("channelField"), channelSelect),
     fieldEl(copy.t("categoryField"), categorySelect),
+    compatToggle.label,
+    refreshButton,
   );
-
-  const intro = el("div", "sfstore__intro");
-  intro.append(
-    el("h2", "sfstore__title", copy.t("pageTitle")),
-    el("p", "sfstore__lede", copy.t("pageLede")),
-  );
-
-  const head = el("header", "sfstore__head");
-  head.append(intro, filters);
 
   const countEl = el("p", "sfstore__count");
   countEl.setAttribute("data-role", "count");
   const staleEl = el("p", "sfstore__stale");
   staleEl.setAttribute("data-role", "stale");
   staleEl.hidden = true;
-  // One sentence instead of a badge on every row: the host never reports its version, so
-  // there is no per-row compatibility verdict to give (see compatibilityNote).
+  // One sentence instead of a badge on every card: the host never reports its version, so
+  // there is no per-card compatibility verdict to give (see compatibilityNote).
   const compatNoteEl = el("p", "sfstore__hint");
   compatNoteEl.setAttribute("data-role", "compat-note");
   compatNoteEl.hidden = true;
   const metaRow = el("div", "sfstore__meta");
-  metaRow.append(countEl, compatToggle.label, staleEl, compatNoteEl);
+  metaRow.append(countEl, staleEl, compatNoteEl);
 
-  const listEl = el("div", "sfstore__list");
-  listEl.setAttribute("data-role", "list");
-  listEl.setAttribute("aria-live", "polite");
-
-  const prevButton = buttonEl(copy.t("prevPage"));
-  prevButton.setAttribute("data-role", "prev");
-  const nextButton = buttonEl(copy.t("nextPage"));
-  nextButton.setAttribute("data-role", "next");
-  const pager = el("div", "sfstore__pager");
-  pager.append(prevButton, nextButton);
-
-  const listHead = el("div", "sfstore__panel-head");
-  listHead.append(el("h3", "sfstore__panel-title", copy.t("catalogHeading")), refreshButton);
-
-  const listPanel = el("section", "sfstore__panel");
-  listPanel.setAttribute("aria-label", copy.t("catalogAria"));
-  listPanel.append(listHead, listEl, pager);
-
-  const detailEl = el("div", "sfstore__detail");
-  detailEl.setAttribute("data-role", "detail");
-  const detailPanel = el("section", "sfstore__panel sfstore__panel--detail");
-  detailPanel.setAttribute("aria-label", copy.t("detailAria"));
-  detailPanel.append(detailEl);
+  const head = el("header", "sfstore__head");
+  head.append(toolbar, metaRow);
 
   const grid = el("div", "sfstore__grid");
-  grid.append(listPanel, detailPanel);
+  grid.setAttribute("data-role", "list");
+  grid.setAttribute("role", "group");
+  grid.setAttribute("aria-label", copy.t("catalogAria"));
 
-  root.append(head, metaRow, grid);
+  // 卡片本身是按钮，逐张 announce 会很吵；加载态与结果数改由一个礼貌的 status 播报。
+  const liveEl = el("p", "sfstore__sr-only");
+  liveEl.setAttribute("role", "status");
+  liveEl.setAttribute("data-role", "status");
+
+  const moreErrorEl = el("p", "sfstore__error");
+  moreErrorEl.setAttribute("data-role", "more-error");
+  moreErrorEl.hidden = true;
+
+  const moreButton = buttonEl(copy.t("loadMore"));
+  moreButton.setAttribute("data-action", "load-more");
+  moreButton.setAttribute("data-role", "more");
+
+  const moreWrap = el("div", "sfstore__more");
+  moreWrap.setAttribute("data-role", "more-wrap");
+  moreWrap.hidden = true;
+  moreWrap.append(moreErrorEl, moreButton);
+
+  const results = el("div", "sfstore__results");
+  results.append(liveEl, grid, moreWrap);
+
+  root.append(head, results);
   target.append(root);
+
+  const dialog = createDialog({
+    copy,
+    background: root,
+    onClose: () => {
+      state.selectedSlug = "";
+      state.detailMode = "idle";
+      state.detailError = "";
+      state.product = null;
+      state.view = null;
+      state.version = "";
+      state.platform = null;
+      state.install = freshInstall();
+    },
+  });
 
   // ---------- plumbing ----------
 
@@ -296,15 +342,34 @@ export function mount(target: HTMLElement, bridge: PageBridge): () => void {
   // ---------- catalog ----------
 
   function resetPaging() {
-    state.trail = [null];
-    state.page = 0;
     state.nextCursor = null;
+    state.appendError = "";
   }
 
-  async function loadCatalog() {
+  function mergeItems(current: CatalogItemView[], incoming: CatalogItemView[]): CatalogItemView[] {
+    const seen = new Set(current.map((item) => item.slug));
+    const merged = current.slice();
+    for (const item of incoming) {
+      if (seen.has(item.slug)) continue;
+      seen.add(item.slug);
+      merged.push(item);
+    }
+    return merged;
+  }
+
+  async function loadCatalog(options: { append?: boolean } = {}) {
+    const append = options.append === true;
+    if (append && (!state.nextCursor || state.appending || state.loading)) return;
     const generation = catalogGeneration += 1;
     state.loading = true;
-    if (!state.items.length) state.catalogMode = "loading";
+    state.appendError = "";
+    if (append) {
+      state.appending = true;
+    } else {
+      state.items = [];
+      state.catalogMode = "loading";
+      state.errorText = "";
+    }
     renderAll();
 
     try {
@@ -313,61 +378,65 @@ export function mount(target: HTMLElement, bridge: PageBridge): () => void {
           query: state.query,
           channel: state.channel,
           category: state.category,
-          cursor: state.trail[state.page] ?? null,
+          cursor: append ? state.nextCursor : null,
           compatMode: state.compatMode,
         }),
       );
       if (disposed || generation !== catalogGeneration) return;
       const document_ = parseCatalog(payload);
-      state.items = document_.items.map((item) => toCatalogItemView(item, copy));
+      // target 必须先落地：卡片徽标的架构判决要拿它当基准。
+      state.target = document_.target ?? null;
+      const incoming = document_.items.map((item) => toCatalogItemView(item, copy, state.target));
+      state.items = append ? mergeItems(state.items, incoming) : incoming;
       state.total = document_.total;
       // parseCatalog 已经归一化过；这里把可空声明收紧成状态的真实形状。
       state.nextCursor = document_.nextCursor ?? null;
-      state.target = document_.target ?? null;
       state.stale = document_.stale === true;
       state.fetchedAt = document_.fetchedAt ?? "";
       state.pageCompatibility = document_.compatibility;
+      // 服务端回显优先；老服务端不回显时只有 auto 才按 estimated 推断（见 resolveAppliedCompat）。
+      state.appliedCompat = resolveAppliedCompat(document_, state.compatMode);
       state.catalogMode = state.items.length ? "ready" : "empty";
       state.errorText = "";
     } catch (error) {
       if (disposed || generation !== catalogGeneration) return;
       const failure = classifyFailure(error);
-      state.items = [];
-      state.total = 0;
-      state.nextCursor = null;
-      state.pageCompatibility = null;
-      if (failure.kind === "not_configured") {
-        state.catalogMode = "setup";
-        state.errorText = "";
+      if (append) {
+        // 追加失败不动已有卡片：错误贴着「加载更多」，用户可以直接再点一次。
+        state.appendError =
+          failure.kind === "not_configured"
+            ? copy.t("catalogUnreachable")
+            : failure.detail || copy.t("catalogUnreachable");
       } else {
-        state.catalogMode = "error";
-        state.errorText = failure.detail || copy.t("catalogUnreachable");
+        state.items = [];
+        state.total = 0;
+        state.nextCursor = null;
+        state.pageCompatibility = null;
+        if (failure.kind === "not_configured") {
+          state.catalogMode = "setup";
+          state.errorText = "";
+        } else {
+          state.catalogMode = "error";
+          state.errorText = failure.detail || copy.t("catalogUnreachable");
+        }
       }
     } finally {
       if (!disposed && generation === catalogGeneration) {
         state.loading = false;
+        state.appending = false;
         renderAll();
       }
     }
   }
 
-  function goPage(delta: number) {
-    if (state.loading) return;
-    if (delta < 0) {
-      if (state.page === 0) return;
-      state.page -= 1;
-    } else {
-      if (!state.nextCursor) return;
-      state.trail = state.trail.slice(0, state.page + 1);
-      state.trail.push(state.nextCursor);
-      state.page += 1;
-    }
+  function reloadCatalog() {
+    resetPaging();
     void loadCatalog();
   }
 
   // ---------- detail ----------
 
-  async function selectDetail(slug: string) {
+  async function openProduct(slug: string) {
     if (!slug) return;
     const generation = detailGeneration += 1;
     state.selectedSlug = slug;
@@ -378,21 +447,24 @@ export function mount(target: HTMLElement, bridge: PageBridge): () => void {
     state.version = "";
     state.platform = null;
     state.install = freshInstall();
-    renderAll();
+    dialog.open();
+    dialog.activate("readme");
+    renderDetail();
 
     try {
       const payload = await bridge.request(buildProductPath(slug));
       if (disposed || generation !== detailGeneration) return;
       const product = parseProduct(payload);
-      const view = toProductView(product, copy);
+      const view = toProductView(product, copy, state.target);
       state.product = product;
       state.view = view;
       const versions = installableReleases(view);
-      const preferred = product.latestVersion && versions.some((item) => item.version === product.latestVersion)
-        ? product.latestVersion
-        : versions[0]?.version ?? "";
-      state.version = preferred;
-      state.platform = defaultPlatform(findRelease(view, preferred), state.target);
+      // 默认选「最新的、可安装的、支持当前架构」那一版；全都不支持时退到第一版，
+      // 让安装门禁去说明「这一版装不上」，而不是留下一个空的下拉。
+      const preferred = preferredRelease(versions, state.target, product.latestVersion ?? "");
+      const selected = preferred ?? versions[0] ?? null;
+      state.version = selected?.version ?? "";
+      state.platform = defaultPlatform(selected, state.target);
       state.detailMode = "ready";
     } catch (error) {
       if (disposed || generation !== detailGeneration) return;
@@ -403,8 +475,10 @@ export function mount(target: HTMLElement, bridge: PageBridge): () => void {
         state.detailMode = "error";
         state.detailError = failure.detail || copy.t("detailUnavailable");
       }
+      // 错误/未配置的说明只画在 README 分区，所以把焦点也带回默认分区。
+      dialog.activate("readme");
     } finally {
-      if (!disposed && generation === detailGeneration) renderAll();
+      if (!disposed && generation === detailGeneration) renderDetail();
     }
   }
 
@@ -415,16 +489,9 @@ export function mount(target: HTMLElement, bridge: PageBridge): () => void {
     return findRelease(state.view, state.version);
   }
 
+  // 平台不再由人挑：换版本时按宿主 target 重新自动匹配（精确 → any/any → 第一项）。
   function syncPlatform() {
-    const release = currentRelease();
-    if (!release) {
-      state.platform = null;
-      return;
-    }
-    const kept = state.platform
-      ? release.platforms.find((item) => item.os === state.platform?.os && item.arch === state.platform?.arch)
-      : undefined;
-    state.platform = kept ?? defaultPlatform(release, state.target);
+    state.platform = defaultPlatform(currentRelease(), state.target);
   }
 
   async function requestSignedUrl(): Promise<InstallUrlResponseDto> {
@@ -449,6 +516,53 @@ export function mount(target: HTMLElement, bridge: PageBridge): () => void {
       : copy.t("signFailed");
   }
 
+  /**
+   * 交给宿主安装。宿主有 `installAndEnableExtension` 就用它（装完由宿主按自己的规则启用，
+   * 可执行后端仍要它自己的信任确认）；没有就退回只暂存的 `installExtension`。
+   */
+  function callInstall(request: HostInstallRequest) {
+    return canEnable ? bridge.installAndEnableExtension!(request) : bridge.installExtension!(request);
+  }
+
+  /**
+   * 回执状态只认宿主回报的 `outcome`。缺失或未知一律按「已暂存」处理：
+   * 宁可少说，也不能把只暂存的包装成正在运行。
+   */
+  function receiptState(result: HostInstallResult): InstallState {
+    const outcome = readInstallOutcome(result);
+    const running = outcome === "enabled" || outcome === "upgraded";
+    return {
+      status: running ? "enabled" : "staged",
+      outcome,
+      message: "",
+      result,
+      signed: null,
+      pending: false,
+    };
+  }
+
+  function notifyReceipt(outcome: HostInstallEnableOutcome | null) {
+    if (outcome === "enabled" || outcome === "upgraded") {
+      notify(
+        copy.t(outcome === "enabled" ? "enabledTitle" : "upgradedTitle"),
+        copy.t(outcome === "enabled" ? "enabledNote" : "upgradedNote"),
+        "success",
+      );
+      return;
+    }
+    notify(copy.t("stagedTitle"), trustNote(copy), "success");
+  }
+
+  /** 安装条主按钮在回执后的文案：宿主做完的事，不替它说成别的。 */
+  function receiptLabel(): string | null {
+    if (state.install.status === "enabled") {
+      return copy.t(state.install.outcome === "upgraded" ? "upgradedTitle" : "enabledTitle");
+    }
+    // partial：包已在盘上，主按钮不能再是「安装并启用」（那等于整包重装）。
+    if (state.install.status === "partial") return copy.t("partialTitle");
+    return state.install.status === "staged" ? copy.t("stagedTitle") : null;
+  }
+
   async function startInstall() {
     if (state.install.pending) {
       state.install.message = copy.t("installBusy");
@@ -456,29 +570,41 @@ export function mount(target: HTMLElement, bridge: PageBridge): () => void {
       notify(copy.t("installBusy"), copy.t("installBusyHint"), "error");
       return;
     }
-    if (!canInstall || !state.product || !state.version || !state.platform) return;
+    if (!canPageInstall || !state.product || !state.version || !state.platform) return;
 
-    state.install = { status: "running", message: "", result: null, signed: null, pending: true };
+    state.install = { ...freshInstall(), status: "running", pending: true };
     refreshInstallArea();
 
     let stage: "sign" | "install" = "sign";
     try {
       const signed = await requestSignedUrl();
       stage = "install";
-      const result = await bridge.installExtension!(
+      const result = await callInstall(
         buildInstallRequest({ signed, product: state.product, version: state.version }),
       );
       if (disposed) return;
-      state.install = { status: "staged", message: "", result, signed: null, pending: false };
-      notify(copy.t("stagedTitle"), trustNote(copy), "success");
+      state.install = receiptState(result);
+      notifyReceipt(state.install.outcome);
     } catch (error) {
       if (disposed) return;
       const failure = classifyFailure(error);
       const message = stage === "sign" ? signFailureMessage(failure) : installFailureText(error, copy);
-      state.install = { status: "failed", message, result: null, signed: null, pending: false };
-      notify(message, undefined, "error");
+      if (failure.phase === "activate") {
+        // 装好了、只是没启用：如实说清楚，并且不给重装入口。
+        // 回执里只放宿主的原始原因，别把通用码文案再贴一遍（回执本身已经说清了）。
+        const detail = failure.detail && failure.detail !== "install_failed" ? failure.detail : "";
+        state.install = { ...freshInstall(), status: "partial", message: detail };
+        notify(copy.t("partialTitle"), copy.t("partialNote"), "error");
+      } else {
+        state.install = { ...freshInstall(), status: "failed", message };
+        // 用户主动取消不是故障：只在 footer 状态位说明，不再弹一条不自动消失的错误 Toast。
+        if (installFailureCode(error) !== "install_cancelled") notify(message, undefined, "error");
+      }
     } finally {
-      if (!disposed) refreshInstallArea();
+      if (!disposed) {
+        refreshInstallArea();
+        restoreDialogFocus();
+      }
     }
   }
 
@@ -486,21 +612,24 @@ export function mount(target: HTMLElement, bridge: PageBridge): () => void {
     if (state.install.pending) return;
     if (!state.product || !state.version || !state.platform) return;
 
-    state.install = { status: "running", message: "", result: null, signed: null, pending: true };
+    state.install = { ...freshInstall(), status: "running", pending: true };
     refreshInstallArea();
 
     try {
       const signed = await requestSignedUrl();
       if (disposed) return;
-      state.install = { status: "signed", message: "", result: null, signed, pending: false };
+      state.install = { ...freshInstall(), status: "signed", signed };
       notify(copy.t("signedReadyTitle"), copy.t("signedValidHint"), "success");
     } catch (error) {
       if (disposed) return;
       const message = signFailureMessage(classifyFailure(error));
-      state.install = { status: "failed", message, result: null, signed: null, pending: false };
+      state.install = { ...freshInstall(), status: "failed", message };
       notify(message, undefined, "error");
     } finally {
-      if (!disposed) refreshInstallArea();
+      if (!disposed) {
+        refreshInstallArea();
+        restoreDialogFocus();
+      }
     }
   }
 
@@ -520,7 +649,7 @@ export function mount(target: HTMLElement, bridge: PageBridge): () => void {
   function renderAll() {
     renderMeta();
     renderList();
-    renderPager();
+    renderMore();
     renderDetail();
   }
 
@@ -538,25 +667,28 @@ export function mount(target: HTMLElement, bridge: PageBridge): () => void {
       staleEl.hidden = true;
       staleEl.textContent = "";
     }
-    const note = compatibilityNote(state.pageCompatibility, copy, state.compatMode);
+    const note = compatibilityNote(state.pageCompatibility, copy, state.appliedCompat);
     compatNoteEl.hidden = note === "";
     compatNoteEl.textContent = note;
 
-    // 开关只在有判决时存在；`checked` 始终跟状态走，避免重新渲染后与请求口径脱节。
+    // 开关只在有判决时存在；`checked` 跟**本次生效口径**走，而不是跟操作者的选择走 ——
+    // 开发版宿主默认不过滤，这时开关必须是未勾的，否则开关在说谎。
     const showToggle =
       state.pageCompatibility !== null && state.pageCompatibility.status !== "unknown";
     compatToggle.label.hidden = !showToggle;
-    compatToggle.input.checked = state.compatMode === "compatible";
+    compatToggle.input.checked = state.appliedCompat === "compatible";
   }
 
   function renderList() {
-    listEl.replaceChildren();
+    grid.replaceChildren();
+    liveEl.textContent = "";
     if (state.catalogMode === "loading") {
-      listEl.append(stateBlock(copy, { text: copy.t("catalogLoading") }));
+      for (const card of catalogSkeletonCards()) grid.append(card);
+      liveEl.textContent = copy.t("catalogLoading");
       return;
     }
     if (state.catalogMode === "setup") {
-      listEl.append(
+      grid.append(
         stateBlock(copy, {
           title: copy.t("setupTitle"),
           text: copy.t("setupText"),
@@ -566,7 +698,7 @@ export function mount(target: HTMLElement, bridge: PageBridge): () => void {
       return;
     }
     if (state.catalogMode === "error") {
-      listEl.append(
+      grid.append(
         stateBlock(copy, {
           title: copy.t("catalogErrorTitle"),
           text: state.errorText,
@@ -576,41 +708,56 @@ export function mount(target: HTMLElement, bridge: PageBridge): () => void {
       return;
     }
     if (!state.items.length) {
-      listEl.append(
-        stateBlock(copy, { title: copy.t("emptyTitle"), text: copy.t("emptyText") }),
-      );
+      grid.append(stateBlock(copy, { title: copy.t("emptyTitle"), text: copy.t("emptyText") }));
       return;
     }
-    for (const item of state.items) listEl.append(catalogRowView(item, item.slug === state.selectedSlug));
+    for (const item of state.items) grid.append(catalogCardView(item, copy));
   }
 
-  function renderPager() {
-    prevButton.disabled = state.loading || state.page === 0;
-    nextButton.disabled = state.loading || !state.nextCursor;
+  function renderMore() {
+    const visible = state.catalogMode === "ready" && (state.nextCursor !== null || state.appendError !== "");
+    moreWrap.hidden = !visible;
+    moreErrorEl.hidden = state.appendError === "";
+    moreErrorEl.textContent = state.appendError;
+    // 隐藏时也同步按钮态：下次重新可见时不能残留「加载中…」。
+    moreButton.textContent = state.appending ? copy.t("loadMorePending") : copy.t("loadMore");
+    moreButton.disabled = state.appending || state.loading;
+    if (state.appending) moreButton.setAttribute("aria-busy", "true");
+    else moreButton.removeAttribute("aria-busy");
   }
 
   function renderDetail() {
-    installBlock = null;
-    detailEl.replaceChildren();
-    if (state.detailMode === "idle") {
-      detailEl.append(stateBlock(copy, { text: copy.t("detailIdle") }));
-      return;
-    }
+    if (!dialog.isOpen()) return;
+    dialog.surface.setAttribute("aria-labelledby", DIALOG_TITLE_ID);
+    dialog.header.replaceChildren();
+    const view = state.view;
+    const item = state.items.find((entry) => entry.slug === state.selectedSlug) ?? null;
+    if (view) dialog.header.append(dialogHeaderFromView(view, copy));
+    else if (item) dialog.header.append(dialogHeaderFromItem(item, copy));
+
+    renderPanels();
+    renderNotice();
+    renderFoot();
+  }
+
+  function renderPanels() {
+    const readmePanel = dialog.tab("readme").panel;
+    const versionsPanel = dialog.tab("versions").panel;
+    const notesPanel = dialog.tab("notes").panel;
+    readmePanel.replaceChildren();
+    versionsPanel.replaceChildren();
+    notesPanel.replaceChildren();
+
     if (state.detailMode === "loading") {
-      detailEl.append(stateBlock(copy, { text: copy.t("detailLoading") }));
+      readmePanel.append(stateBlock(copy, { text: copy.t("detailLoading") }));
       return;
     }
     if (state.detailMode === "setup") {
-      detailEl.append(
-        stateBlock(copy, {
-          title: copy.t("setupTitle"),
-          text: copy.t("setupText"),
-        }),
-      );
+      readmePanel.append(stateBlock(copy, { title: copy.t("setupTitle"), text: copy.t("setupText") }));
       return;
     }
     if (state.detailMode === "error") {
-      detailEl.append(
+      readmePanel.append(
         stateBlock(copy, {
           title: copy.t("detailErrorTitle"),
           text: state.detailError,
@@ -620,107 +767,162 @@ export function mount(target: HTMLElement, bridge: PageBridge): () => void {
       return;
     }
     const view = state.view;
-    const product = state.product;
-    if (!view || !product) {
-      detailEl.append(stateBlock(copy, { text: copy.t("detailNoSelection") }));
-      return;
-    }
-
-    detailEl.append(detailHeader(view, copy));
-    installBlock = el("div", "sfstore__install");
-    installBlock.setAttribute("data-role", "install");
-    detailEl.append(installBlock);
-    renderInstallArea();
-
-    const notes = notesBlock(view, state.version, copy);
-    if (notes) detailEl.append(notes);
-    detailEl.append(readmeBlock(view, copy));
-    detailEl.append(versionsBlock(view, copy));
+    if (!view) return;
+    // 作者条在最上方：打开弹窗默认就是 README，第一个看到的应该是「谁发的这个包」。
+    if (view.author) readmePanel.append(authorStrip(view.author, copy));
+    readmePanel.append(readmeBlock(view, copy));
+    versionsPanel.append(versionsBlock(view, copy));
+    notesPanel.append(notesBlock(view, copy));
   }
 
   function refreshInstallArea() {
-    if (!installBlock) return;
-    renderInstallArea();
+    renderNotice();
+    renderFoot();
   }
 
-  function renderInstallArea() {
-    if (!installBlock) return;
-    installBlock.replaceChildren();
+  /**
+   * 安装条重绘会换掉原来的按钮节点：宿主的确认框把焦点还回来时已经没有落点，
+   * `activeElement` 落到 body，Esc 就再也到不了 overlay 的 keydown。重绘后如果焦点
+   * 不在弹窗内，就把它交回主按钮；主按钮此刻禁用（已暂存）则交给关闭按钮。
+   * 测试替身没有 `contains`，按「不在弹窗内」处理，交给 focus() 记录即可。
+   */
+  function restoreDialogFocus() {
+    if (!dialog.isOpen()) return;
+    const doc = (globalThis as any).document;
+    const active = doc?.activeElement ?? null;
+    const inside = typeof dialog.surface.contains === "function" && dialog.surface.contains(active);
+    if (inside) return;
+    const primary = dialog.footer.querySelector(
+      '[data-action="install"], [data-action="sign"]',
+    ) as HTMLButtonElement | null;
+    const target = primary && !primary.disabled
+      ? primary
+      : (dialog.surface.querySelector('[data-action="dialog-close"]') as HTMLElement | null);
+    if (target && typeof target.focus === "function") target.focus();
+  }
+
+  /**
+   * 滚动区内的通知槽：安装期间提示、旧宿主的签名链接、已暂存回执。
+   * 放在滚动区而不是 footer：footer 高度恒 64px，任何状态都不增高。
+   */
+  /**
+   * 架构说明：只在有 target 且详情已就绪时说。两种情形各一句 ——
+   * 「最新版不支持、旧版支持」解释为什么默认选中了旧版本；「全都不支持」解释为什么装不了。
+   * 选中的就是那个不支持的版本时这里不重复：安装门禁的状态位已经在说同一句话。
+   */
+  function platformNoticeText(): string {
     const view = state.view;
-    const product = state.product;
-    if (!view || !product) return;
-
-    const versions = installableReleases(view);
-    if (!versions.length) {
-      installBlock.append(el("p", "sfstore__notice", copy.t("noInstallableVersion")));
-      return;
+    if (!view || !state.target || state.detailMode !== "ready") return "";
+    const platform = platformId(state.target);
+    const installable = installableReleases(view);
+    if (installable.length && installable.every((release) => release.supported === false)) {
+      return copy.t("detailNoSupportedRelease", { platform });
     }
-
-    const versionSelect = selectEl(
-      versions.map((release) => ({
-        value: release.version,
-        label: copy.t("versionOption", { version: release.version, channel: release.channelLabel }),
-      })),
-      state.version,
-    );
-    versionSelect.setAttribute("data-action", "version");
-    versionSelect.setAttribute("aria-label", copy.t("versionSelectAria"));
-
-    const platformSelect = selectEl(
-      (currentRelease()?.platforms ?? []).map((option) => ({ value: `${option.os}/${option.arch}`, label: option.label })),
-      state.platform ? `${state.platform.os}/${state.platform.arch}` : undefined,
-    );
-    platformSelect.setAttribute("data-action", "platform");
-    platformSelect.setAttribute("aria-label", copy.t("platformSelectAria"));
-
-    const selectors = el("div", "sfstore__install-row");
-    selectors.append(
-      fieldEl(copy.t("labelVersion"), versionSelect),
-      fieldEl(copy.t("labelPlatform"), platformSelect),
-    );
-    installBlock.append(selectors);
-
-    if (!canInstall) {
-      renderSignedInstall();
-    } else {
-      renderHostInstall();
+    const latest = view.releases.find((release) => release.version === view.latestVersion) ?? null;
+    if (latest && latest.supported === false && state.version && state.version !== latest.version) {
+      return copy.t("detailPlatformUnsupported", {
+        version: latest.version,
+        platform,
+        selected: state.version,
+      });
     }
+    return "";
+  }
 
-    if (state.install.message && state.install.status !== "staged") {
-      installBlock.append(el("p", "sfstore__error", state.install.message));
+  function renderNotice() {
+    const slot = dialog.notice;
+    slot.replaceChildren();
+    if (!dialog.isOpen()) return;
+    if (state.install.pending) {
+      slot.append(el("p", "sfstore__notice", copy.t("installKeepPageOpen")));
+    }
+    const platformNotice = platformNoticeText();
+    if (platformNotice) slot.append(el("p", "sfstore__notice", platformNotice));
+    if (!canPageInstall) {
+      slot.append(el("p", "sfstore__notice", copy.t("legacyHostNotice")));
+      if (state.install.signed) slot.append(signedBlock(state.install.signed, copy));
+    }
+    // 点之前就说明「装完会由宿主启用」：按钮上的「安装并启用」不能是唯一提示。
+    const view = state.view;
+    const gate = view ? installGate(view, currentRelease(), state.target) : null;
+    if (canEnable && gate?.installable && state.install.status === "idle" && !state.install.pending) {
+      slot.append(el("p", "sfstore__notice", copy.t("installEnableHint")));
+    }
+    if (state.install.result && (state.install.status === "staged" || state.install.status === "enabled")) {
+      slot.append(receiptBlock(state.install.result, copy, state.install.outcome));
+    }
+    if (state.install.status === "partial") {
+      slot.append(partialBlock(state.install.message, copy));
     }
   }
 
-  function renderHostInstall() {
-    const installButton = buttonEl(
-      state.install.pending ? copy.t("installPendingAction") : copy.t("installAction"),
-      "primary",
-    );
-    installButton.setAttribute("data-action", "install");
-    installButton.disabled = state.install.pending;
-    installBlock?.append(installButton);
-
+  /** 状态位文案：安装流程自己的四种状态 + 空闲时的架构结论；门禁原因由 foot 在需要时补。 */
+  function installStateText(gate: InstallGate, release: ReleaseView | null): string {
     if (state.install.pending) {
-      installBlock?.append(el("p", "sfstore__notice", copy.t("installKeepPageOpen")));
+      if (!canPageInstall) return copy.t("signPendingAction");
+      return copy.t(canEnable ? "installAndEnablePendingAction" : "installPendingAction");
     }
     if (state.install.status === "staged" && state.install.result) {
-      installBlock?.append(stagedBlock(state.install.result, copy));
+      return `${copy.t("stagedTitle")} · v${state.install.result.version}`;
     }
+    if (state.install.status === "enabled" && state.install.result) {
+      const title = copy.t(state.install.outcome === "upgraded" ? "upgradedTitle" : "enabledTitle");
+      return `${title} · v${state.install.result.version}`;
+    }
+    if (state.install.status === "partial") return copy.t("partialTitle");
+    if (state.install.status === "signed") return copy.t("signedReadyTitle");
+    if (state.install.status === "failed") return state.install.message;
+    // 空闲且能装：把「这台服务器跑得起来」直接说出来。架构不再由人挑，结论就得有人讲。
+    if (gate.installable && release?.supported === true && state.target) {
+      return copy.t("platformSupportedState", { platform: platformId(state.target) });
+    }
+    return "";
   }
 
-  function renderSignedInstall() {
-    installBlock?.append(el("p", "sfstore__notice", copy.t("legacyHostNotice")));
+  function installStateTone(gate: InstallGate, release: ReleaseView | null): "" | "ok" | "bad" {
+    if (state.install.pending) return "";
+    if (state.install.status === "staged" || state.install.status === "enabled") return "ok";
+    if (state.install.status === "signed") return "ok";
+    if (state.install.status === "failed") return "bad";
+    if (state.install.status === "partial") return "bad";
+    if (gate.installable && release?.supported === true && state.target) return "ok";
+    return "";
+  }
 
-    const signButton = buttonEl(
-      state.install.pending ? copy.t("signPendingAction") : copy.t("signAction"),
-      "primary",
+  /** 只重绘弹窗底部：版本/状态位/主按钮，四态同一行，高度恒 64px。 */
+  function renderFoot() {
+    const foot = dialog.footer;
+    foot.replaceChildren();
+    // 安装期间关闭按钮禁用，Esc 与遮罩点击由 dialog 自己忽略。
+    dialog.setPending(state.install.pending);
+    if (!dialog.isOpen()) return;
+    const view = state.view;
+    const product = state.product;
+    if (!view || !product || state.detailMode !== "ready") return;
+
+    const release = currentRelease();
+    const gate = installGate(view, release, state.target);
+    foot.append(
+      ...footNodes(
+        {
+          releases: installableReleases(view),
+          version: state.version,
+          target: state.target,
+          gate,
+          gateText: installGateText(gate, release, copy, state.target),
+          canInstall: canPageInstall,
+          canEnable,
+          pending: state.install.pending,
+          receiptLabel: receiptLabel(),
+          stateText: installStateText(gate, release),
+          tone: installStateTone(gate, release),
+        },
+        copy,
+      ),
     );
-    signButton.setAttribute("data-action", "sign");
-    signButton.disabled = state.install.pending;
-    installBlock?.append(signButton);
-
-    if (state.install.signed) installBlock?.append(signedBlock(state.install.signed, copy));
   }
+
+  // ---------- wiring ----------
 
   listen(searchInput, "input", () => {
     state.query = searchInput.value;
@@ -728,78 +930,76 @@ export function mount(target: HTMLElement, bridge: PageBridge): () => void {
     debounceTimer = setTimeout(() => {
       debounceTimer = null;
       if (disposed) return;
-      resetPaging();
-      void loadCatalog();
+      reloadCatalog();
     }, SEARCH_DEBOUNCE_MS);
   });
 
   listen(channelSelect, "change", () => {
     state.channel = channelSelect.value === "all" ? "all" : "stable";
-    resetPaging();
-    void loadCatalog();
+    reloadCatalog();
   });
 
   listen(categorySelect, "change", () => {
     state.category = categorySelect.value;
-    resetPaging();
-    void loadCatalog();
+    reloadCatalog();
   });
 
   listen(compatToggle.input, "change", () => {
-    // 勾上 = 只看当前版本能装的（后端默认）；取消 = 全部，显式发 compat=all。
-    state.compatMode = compatToggle.input.checked ? "compatible" : "all";
+    // 勾上 = 只看当前版本能装的（显式 compatible）；取消 = 全部（显式 all）。
+    // 两种都是操作者的显式选择，必须发出去 —— 服务端默认值随宿主变化，省略会变成另一个口径。
+    const next: AppliedCompat = compatToggle.input.checked ? "compatible" : "all";
+    state.compatMode = next;
+    // 显式口径在请求飞行期间就是页面的结论：先记下来，重绘时开关与说明不会跳回旧值。
+    state.appliedCompat = next;
     // 兼容性口径变了，旧游标指向的是一份不同的结果集：回到第一页重来。
-    resetPaging();
-    void loadCatalog();
+    reloadCatalog();
   });
 
-  listen(refreshButton, "click", () => {
-    resetPaging();
-    void loadCatalog();
+  listen(refreshButton, "click", reloadCatalog);
+
+  listen(moreButton, "click", () => {
+    void loadCatalog({ append: true });
   });
 
-  listen(prevButton, "click", () => goPage(-1));
-  listen(nextButton, "click", () => goPage(1));
-
-  listen(listEl, "click", (event: any) => {
-    const action = findAttr(event.target, "data-action", listEl);
+  listen(grid, "click", (event: any) => {
+    const action = findAttr(event.target, "data-action", grid);
     if (action === "reload") {
-      resetPaging();
-      void loadCatalog();
+      reloadCatalog();
       return;
     }
-    const slug = findAttr(event.target, "data-slug", listEl);
-    if (slug && slug !== state.selectedSlug) void selectDetail(slug);
+    const slug = findAttr(event.target, "data-slug", grid);
+    if (slug) void openProduct(slug);
   });
 
-  listen(detailPanel, "click", (event: any) => {
-    const action = findAttr(event.target, "data-action", detailPanel);
+  listen(dialog.surface, "click", (event: any) => {
+    const action = findAttr(event.target, "data-action", dialog.surface);
     if (!action) return;
     if (action === "install") void startInstall();
     else if (action === "sign") void startSign();
     else if (action === "copy") void copySignedUrl();
     else if (action === "open-core-install") void goCore(CORE_INSTALL_PATH);
     else if (action === "open-core") void goCore(corePathForKind(state.install.result?.type ?? productKind()));
-    else if (action === "reload-detail") void selectDetail(state.selectedSlug);
+    else if (action === "reload-detail") void openProduct(state.selectedSlug);
   });
 
-  listen(detailPanel, "change", (event: any) => {
-    const action = findAttr(event.target, "data-action", detailPanel);
-    const target = event.target as HTMLSelectElement;
+  listen(dialog.surface, "change", (event: any) => {
+    const action = findAttr(event.target, "data-action", dialog.surface);
+    const select = event.target as HTMLSelectElement;
     if (action === "version") {
-      state.version = target.value;
+      state.version = select.value;
       syncPlatform();
+      // 换了版本，上一份回执或签名链接就不再对应：回到 idle，主按钮重新可用。
+      state.install = freshInstall();
       refreshInstallArea();
-      return;
-    }
-    if (action === "platform") {
-      const release = currentRelease();
-      const [os, arch] = String(target.value).split("/");
-      const option = release?.platforms.find((item) => item.os === os && item.arch === arch);
-      state.platform = option ?? null;
-      refreshInstallArea();
+      focusFootSelect("version");
     }
   });
+
+  /** footer 重绘后把焦点还给刚操作过的 select（键盘选择不该把焦点丢掉）。 */
+  function focusFootSelect(action: string) {
+    const node = dialog.footer.querySelector(`select[data-action="${action}"]`) as HTMLSelectElement | null;
+    if (node && typeof node.focus === "function") node.focus();
+  }
 
   function productKind(): Kind {
     return state.product?.kind ?? state.view?.kind ?? "plugin";
@@ -815,6 +1015,7 @@ export function mount(target: HTMLElement, bridge: PageBridge): () => void {
     if (debounceTimer) clearTimeout(debounceTimer);
     debounceTimer = null;
     for (const dispose of disposers.splice(0)) dispose();
+    dialog.destroy();
     root.remove();
   };
 }

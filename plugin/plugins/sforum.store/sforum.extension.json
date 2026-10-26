@@ -9,10 +9,11 @@
           "entry": "frontend/admin/dist/catalog.mjs",
           "id": "catalog"
         },
-        "description": "浏览商城目录，把选中的扩展交给宿主安装。",
+        "description": "浏览商城目录，把选中的扩展交给宿主安装并启用；主题仍到主题页激活（需要带 extension.install.enable 的 core）。",
         "group": "应用商城",
         "hostActions": [
-          "extension.install"
+          "extension.install",
+          "extension.install.enable"
         ],
         "icon": "i-lucide-store",
         "label": "商城",
@@ -39,7 +40,7 @@
     "url": "https://github.com/zhuchunshu/sforum"
   },
   "backend": {
-    "digest": "b51abc957439d62ba87b49d375204b90f714568292735a0c8bf34149e317b67f",
+    "digest": "1aedeb132bc864b95124a5cea92400ec9acfb555053e4cfab77668ac7a1526dc",
     "entry": "backend/plugin",
     "hostApiVersion": "sforum.host@2",
     "protocolVersion": 2,
@@ -51,7 +52,7 @@
     "net.outbound",
     "extensions.read"
   ],
-  "description": "在论坛后台浏览 SForum 应用商城，并把选中的插件或主题交给宿主安装（只暂存）。",
+  "description": "在论坛后台浏览 SForum 应用商城，把选中的插件或主题交给宿主安装并启用（主题仍需在主题页激活；需要带 extension.install.enable 的 core）。",
   "id": "sforum.store",
   "includes": {
     "langs": "manifest/langs",
@@ -101,7 +102,7 @@
   "openapi": [
     {
       "contractVersion": "sforum.store.openapi.routes@1",
-      "digest": "8cc0443afeb6ec23cf15024d9e0332120e632bfc76d526d25cb223e68a43f777",
+      "digest": "48c00fe5eec5a0e8f496f9bb28835750da17ac19b58c458e0535625a70508f65",
       "id": "sforum.store.file.openapi-routes",
       "namespace": "sforum.store.api",
       "path": "openapi/routes.yaml"
@@ -109,32 +110,32 @@
   ],
   "packageFiles": [
     {
-      "digest": "b51abc957439d62ba87b49d375204b90f714568292735a0c8bf34149e317b67f",
+      "digest": "1aedeb132bc864b95124a5cea92400ec9acfb555053e4cfab77668ac7a1526dc",
       "id": "sforum.store.file.backend",
       "kind": "executable",
       "path": "backend/plugin"
     },
     {
-      "digest": "11682c115212189f898a64387656c39bdb2872a0295192943ce85f82f1a77e7e",
+      "digest": "ad9f5cbd262d7ce26e31f1550eaa9a32c74bc72fc0963fd5a2cd0c7dd3cb341e",
       "id": "sforum.store.file.admin",
       "kind": "frontend",
       "path": "frontend/admin/dist/catalog.mjs"
     },
     {
-      "digest": "7b6dce31f5935de514a6c5490baa6017c74b71e87c0e3f3b9dccf8fd5be898d5",
+      "digest": "68026203e7508ef263483d201c5757fd863e474f6226ab5236572976e7a8ddf4",
       "id": "sforum.store.asset.admin-style",
       "kind": "asset",
       "path": "frontend/admin/dist/catalog.css"
     },
     {
-      "digest": "686bce5695249ae7019fba62322a9ce85f596c6ce3d706c83d1cf3b9e00196c7",
+      "digest": "7efdb79e33b3414e6b26ee62726c93ba233f5ce3d0ceae47f3c41f51624ff759",
       "id": "sforum.store.catalog.response",
       "kind": "schema",
       "path": "schemas/catalog.response.json",
       "version": "1"
     },
     {
-      "digest": "4ba2f4faf0ee3cf187f7ed0a86b140cb10e4d473b230c1ceaac398617d36c9cb",
+      "digest": "b2b282cb48c1536d5476fbcbcd4cc3a3bfbe4c3595e66b701fb4adb9f6e1779d",
       "id": "sforum.store.product.response",
       "kind": "schema",
       "path": "schemas/product.response.json",
@@ -155,7 +156,7 @@
       "version": "1"
     },
     {
-      "digest": "8cc0443afeb6ec23cf15024d9e0332120e632bfc76d526d25cb223e68a43f777",
+      "digest": "48c00fe5eec5a0e8f496f9bb28835750da17ac19b58c458e0535625a70508f65",
       "id": "sforum.store.file.openapi-routes",
       "kind": "openapi",
       "path": "openapi/routes.yaml"
@@ -219,7 +220,7 @@
       "timeoutMs": 15000
     }
   ],
-  "sforumVersion": "\u003e=1.0.0",
+  "sforumVersion": ">=1.0.0",
   "type": "plugin",
   "url": "https://github.com/zhuchunshu/sforum-app-store",
   "version": "0.1.0"

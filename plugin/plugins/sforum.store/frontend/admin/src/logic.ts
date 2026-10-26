@@ -3,17 +3,23 @@
 
 import { INSTALL_FAILURE_EN, INSTALL_FAILURE_ZH, ZH_COPY } from "./copy";
 import type { Copy, CopyKey } from "./copy";
+import { isAnyPlatform, platformId, releaseSupportsTarget, samePlatform, supportsTarget } from "./platform";
 import type {
   AssetDto,
+  AuthorDto,
+  AuthorView,
   CatalogItemDto,
   CatalogItemView,
   CatalogResponseDto,
   CompatibilityDto,
   CompatibilityView,
   ConstraintChipView,
+  HostInstallEnableOutcome,
   HostInstallRequest,
   InstalledExtension,
+  InstalledRelation,
   InstalledView,
+  InstallGate,
   InstallUrlResponseDto,
   Kind,
   PlatformDto,
@@ -44,10 +50,18 @@ export const DIGEST_PREFIX_LENGTH = 12;
 export type ChannelChoice = "stable" | "all";
 
 /**
- * 兼容性过滤口径。`compatible` 是后端的默认值，所以页面不发送它；`all` 才显式追加
- * `compat=all`。宿主没给版本时后端本来就不过滤，页面也把开关藏起来（见 catalog.ts）。
+ * 兼容性过滤口径。
+ *
+ * - `auto`：不发送 `compat`，由商城按宿主决定（开发版默认显示全部，发行版默认只看可安装）；
+ * - `compatible` / `all`：操作者显式选择，必须原样发出去 —— 服务端默认值现在是宿主相关的，
+ *   省略参数会被解释成另一个口径。
+ *
+ * 宿主没给版本时后端本来就不过滤，页面也把开关藏起来（见 catalog.ts）。
  */
-export type CompatMode = "compatible" | "all";
+export type CompatMode = "auto" | "compatible" | "all";
+
+/** 一次目录查询实际生效的口径：服务端回显，或页面在 `auto` 下按 `estimated` 推断。 */
+export type AppliedCompat = Exclude<CompatMode, "auto">;
 
 /** 「含预发布」 sends no `channel` at all: the store counts both channels when the
  * parameter is absent, while `channel=beta` would hide every stable release. */
@@ -87,9 +101,13 @@ export type CatalogQueryInput = {
 /** `GET /api/store/catalog` with the parameter order the plugin backend proxies. */
 export function buildCatalogPath(input: CatalogQueryInput): string {
   const params = new URLSearchParams();
-  // `compatible` 是后端默认值：只在「全部」时显式发出去，免得两份默认值各说各话。
-  if (input.compatMode === "all") params.set("compat", "all");
+  // `auto` 交给商城按宿主决定；显式选择必须发出去 —— 服务端默认值随宿主变化，
+  // 靠省略会把「只看可安装」悄悄换成「全部」。
+  if (input.compatMode !== "auto") params.set("compat", input.compatMode);
   if (input.channel === "stable") params.set("channel", "stable");
+  // 恒发 `all`：架构不再由人挑，产品也不该因为异架构从目录里消失 —— 判决画在卡片上。
+  // 商城只放宽可见性，`compatibility` 仍按宿主 os/arch 求值（见 store 的 buildSummary）。
+  params.set("platform", "all");
   const query = input.query.trim();
   if (query) params.set("q", query);
   if (input.category) params.set("category", input.category);
@@ -124,10 +142,19 @@ export function buildInstallRequest(input: {
 
 // ---------- failure reading ----------
 
+/**
+ * Which phase the Host failed in. Only `install_failed` carries one: `activate`
+ * means the package is already installed and only the enable failed, so the page
+ * must not offer a reinstall. Anything else (including an absent value) is a
+ * plain install failure.
+ */
+export type FailurePhase = "install" | "activate";
+
 export type RequestFailure = {
   status: number;
   code: string;
   message: string;
+  phase: FailurePhase | "";
 };
 
 export type FailureKind = "not_configured" | "failed";
@@ -180,7 +207,9 @@ export function readFailure(error: unknown): RequestFailure {
     typeof body.code === "number" ? body.code : 0,
   ]);
   const message = firstString([nested?.message, body.message, envelopeData?.message, root.message]);
-  return { status, code, message };
+  // 宿主把 phase 直接挂在错误对象上（AdminHostInstallError.phase），不在信封里。
+  const phase = root.phase === "install" || root.phase === "activate" ? root.phase : "";
+  return { status, code, message, phase };
 }
 
 export type FailureClass = {
@@ -188,6 +217,7 @@ export type FailureClass = {
   status: number;
   code: string;
   detail: string;
+  phase: FailurePhase | "";
 };
 
 /** `not_configured` (HTTP 503 from the plugin) drives the calm setup state. */
@@ -201,6 +231,7 @@ export function classifyFailure(error: unknown): FailureClass {
     kind: notConfigured ? "not_configured" : "failed",
     status: failure.status,
     code: failure.code,
+    phase: failure.phase,
     detail:
       failure.message ||
       failure.code ||
@@ -221,6 +252,11 @@ export const INSTALL_FAILURE_TEXT_EN: Readonly<Record<string, string>> = INSTALL
  */
 export function installFailureText(error: unknown, copy: Copy = ZH_COPY): string {
   const failure = readFailure(error);
+  // 启用阶段的失败不是安装失败：包已经在盘上，别让通用码把它说成「安装失败」。
+  if (failure.phase === "activate") {
+    const detail = failure.message && failure.message !== failure.code ? failure.message : "";
+    return detail ? copy.t("installEnableFailedWith", { detail }) : copy.t("installEnableFailed");
+  }
   const known = copy.failure[failure.code];
   if (known) return known;
   const suffix = failure.code || (failure.status ? `HTTP ${failure.status}` : "");
@@ -229,6 +265,23 @@ export function installFailureText(error: unknown, copy: Copy = ZH_COPY): string
 
 export function installFailureCode(error: unknown): string {
   return readFailure(error).code;
+}
+
+export function installFailurePhase(error: unknown): FailurePhase | "" {
+  return readFailure(error).phase;
+}
+
+/**
+ * Reads the enable outcome off an install result.
+ *
+ * The value comes from the Host across the bridge, so it is validated instead of
+ * trusted: an unknown/missing outcome means "this Host did not report an enable",
+ * which is exactly the old-host shape. Never guess `enabled` from anything else —
+ * a package that is merely staged must not be presented as running.
+ */
+export function readInstallOutcome(result: unknown): HostInstallEnableOutcome | null {
+  const value = asRecord(result)?.outcome;
+  return value === "enabled" || value === "upgraded" || value === "staged" ? value : null;
 }
 
 // ---------- payload parsing ----------
@@ -322,6 +375,9 @@ function normalizeItem(value: unknown): CatalogItemDto | null {
     sforumVersion: stringOr(record.sforumVersion).trim(),
     updatedAt: stringOr(record.updatedAt),
     platforms: normalizePlatforms(record.platforms),
+    // 新商城才有这个字段；缺失时保持 undefined，视图层回落 `platforms`（见 toCatalogItemView）。
+    latestPlatforms:
+      record.latestPlatforms === undefined ? undefined : normalizePlatforms(record.latestPlatforms),
     compatibility: normalizeCompatibility(record.compatibility),
   };
 }
@@ -339,10 +395,29 @@ export function parseCatalog(payload: unknown): CatalogResponseDto {
     total: numberOr(document.total, items.length),
     nextCursor: typeof document.nextCursor === "string" && document.nextCursor ? document.nextCursor : null,
     compatibility: normalizeCompatibility(document.compatibility),
+    // 服务端回显的生效口径；老服务端没有这个字段，或值不在契约里，一律按「没回显」处理。
+    compat:
+      document.compat === "compatible" || document.compat === "all" ? document.compat : null,
     target: normalizeTarget(document.target),
     stale: document.stale === true,
     fetchedAt: stringOr(document.fetchedAt),
   };
+}
+
+/**
+ * 本次目录查询实际生效的口径。
+ *
+ * 服务端回显优先。老服务端不回显时只有 `auto` 能按 `estimated` 推断：开发版宿主默认显示
+ * 全部，发行版默认只看可安装。显式请求的口径是页面自己发出去的，推断回来反而会把开关
+ * 状态改错（显式 compatible 在开发版宿主上本来就会真的过滤）。
+ */
+export function resolveAppliedCompat(
+  document_: CatalogResponseDto,
+  requested: CompatMode,
+): AppliedCompat {
+  if (document_.compat) return document_.compat;
+  if (requested !== "auto") return requested;
+  return document_.compatibility.estimated ? "all" : "compatible";
 }
 
 function normalizeAssets(value: unknown): AssetDto[] {
@@ -378,6 +453,8 @@ function normalizeRelease(value: unknown): ReleaseDto | null {
     status: stringOr(record.status).trim(),
     digest: stringOr(record.digest).trim(),
     notes: typeof record.notes === "string" ? record.notes : null,
+    notesHtml: typeof record.notesHtml === "string" ? record.notesHtml : null,
+    installedRelation: isRelation(record.installedRelation) ? record.installedRelation : undefined,
     capabilities: Array.isArray(record.capabilities)
       ? record.capabilities.filter((item): item is string => typeof item === "string")
       : [],
@@ -432,10 +509,33 @@ export function parseProduct(payload: unknown): ProductDto {
     installed: normalizeInstalled(record.installed),
     updateAvailable: record.updateAvailable === true,
     repoUrl: typeof record.repoUrl === "string" ? record.repoUrl : null,
+    author: normalizeAuthor(record.author),
     latestVersion: stringOr(record.latestVersion).trim(),
     readme: normalizeReadme(record.readme),
     platforms: normalizePlatforms(record.platforms),
     releases,
+  };
+}
+
+/**
+ * `author` is `{username, displayName, avatarUrl, github} | null`. Every field is optional on
+ * the wire and each one is validated on its own: a half-broken block must still render the
+ * half that survived, and `null` (or garbage) means "draw no strip".
+ */
+function normalizeAuthor(value: unknown): AuthorDto | null {
+  const record = asRecord(value);
+  if (!record) return null;
+  const github = asRecord(record.github);
+  const login = github ? stringOr(github.login).trim() : "";
+  const url = github ? stringOr(github.url).trim() : "";
+  return {
+    username: typeof record.username === "string" ? record.username : null,
+    displayName: typeof record.displayName === "string" ? record.displayName : null,
+    avatarUrl: normalizeAssetUrl(record.avatarUrl),
+    // Same http(s)-only guard as the avatar: a profile link is rendered as an anchor.
+    profileUrl: normalizeAssetUrl(record.profileUrl),
+    // The link is only usable when both halves are there; a login with no URL renders dead.
+    github: login && url ? { login, url } : null,
   };
 }
 
@@ -477,14 +577,17 @@ export function platformOptions(platforms: PlatformDto[], copy: Copy = ZH_COPY):
   return options;
 }
 
+/**
+ * 卡片徽标只放判决：`compatible` / `incompatible` 各一枚，`unknown` 没有。
+ *
+ * `estimated`（宿主是开发版构建）是**宿主属性**，不是对某个产品的判决：D9 放开后 dev 也报
+ * 真实版本，若让 estimated 继续挡在 status 前面，每张卡都是同一句「按开发版估算」，默认
+ * 「显示全部」时反而分不出哪个能装。宿主口径由页级 `compatibilityNote` 说一次。
+ */
 export function compatibilityView(
   input: CompatibilityDto,
   copy: Copy = ZH_COPY,
 ): CompatibilityView | null {
-  // Same rule as the store's own card: only a real verdict earns a badge, and a dev-build
-  // estimate is never phrased as one. `unknown` means the host never told anyone its
-  // version, so there is nothing per-row to say — `compatibilityNote` says it once.
-  if (input.estimated) return { label: copy.t("estimatedLabel"), tone: "warn" };
   if (input.status === "compatible") return { label: copy.t("compatibleLabel"), tone: "ok" };
   if (input.status === "incompatible") return { label: copy.t("incompatibleLabel"), tone: "bad" };
   return null;
@@ -495,18 +598,25 @@ export function compatibilityView(
  * forwards a host version (SForum D9), so `unknown` is the normal case and deserves a
  * sentence instead of a badge on every row.
  *
- * 有判决时 `compatMode` 才有意义：一旦操作者切到「全部」，「已按宿主版本筛出一份可安装的
+ * 有判决时 `appliedCompat` 才有意义：一旦本次口径是「全部」，「已按宿主版本筛出一份可安装的
  * 目录」就不成立了，那种口径需要自己的一句说明。
+ *
+ * `appliedCompat` 是**实际生效**的口径，不是操作者的选择：开发版宿主默认不过滤，只有真的按
+ * 版本筛过（`compatible`）才能说「已按版本约束筛选」，而且开发版的版本号来自 git tag，得说清。
  */
 export function compatibilityNote(
   input: CompatibilityDto | null,
   copy: Copy = ZH_COPY,
-  compatMode: CompatMode = "compatible",
+  appliedCompat: AppliedCompat = "compatible",
 ): string {
   if (!input) return "";
-  if (input.estimated) return copy.t("compatEstimatedNote");
+  if (input.estimated) {
+    return appliedCompat === "compatible"
+      ? copy.t("compatDevFilteredNote")
+      : copy.t("compatDevAllNote");
+  }
   if (input.status === "unknown") return copy.t("compatUnjudgedNote");
-  if (compatMode === "all") return copy.t("compatAllNote");
+  if (appliedCompat === "all") return copy.t("compatAllNote");
   return copy.t("compatFilteredNote");
 }
 
@@ -583,6 +693,140 @@ export function installedView(
   };
 }
 
+/**
+ * Readable wording for a version's relation to the installed one. `null` when the backend
+ * sent no relation: the page does not guess a comparison it cannot make.
+ */
+export function relationLabel(
+  relation: InstalledRelation | null,
+  copy: Copy = ZH_COPY,
+): string | null {
+  switch (relation) {
+    case "newer":
+      return copy.t("relationNewer");
+    case "same":
+      return copy.t("relationSame");
+    case "older":
+      return copy.t("relationOlder");
+    case "unknown":
+      return copy.t("relationUnknown");
+    default:
+      return null;
+  }
+}
+
+/**
+ * The install-bar decision.
+ *
+ * Why the page needs a gate at all: core accepts any package with the same extension id and
+ * stages it as a candidate, so "install 1.5.0 while 1.6.0 is enabled" is not refused
+ * anywhere downstream — it silently replaces the candidate. Same version is a no-op that
+ * costs a download and a trust prompt; an older version is a downgrade whose migrations are
+ * not reversible. Both are the operator's call to make deliberately (uninstall first), never
+ * something a stray click in the catalog should do.
+ *
+ * 架构判定排在版本判定之前：一个包根本没为这台服务器构建，讨论「它比已装的旧还是新」
+ * 没有意义，先说的应该是装不上。`supported === null`（没有 target / 没有平台信息）不拦。
+ *
+ * `unknown` stays installable: a dev build's version comes from a git tag and may not be
+ * semver, and refusing on a text compare would hide the only action that works.
+ */
+export function installGate(
+  view: ProductView | null,
+  release: ReleaseView | null,
+  target?: PlatformDto | null,
+): InstallGate {
+  const installedVersion = view?.installed?.version ?? null;
+  if (!release || !release.installable) {
+    return { installable: false, reason: "noRelease", installedVersion };
+  }
+  // 有 target 就现场判定（视图可能是别处构造的），没有就认视图里算好的结论。
+  const supported = target === undefined ? release.supported : releaseSupportsTarget(release, target);
+  if (supported === false) {
+    return { installable: false, reason: "platformUnsupported", installedVersion };
+  }
+  if (installedVersion === null) {
+    return { installable: true, upgrade: false };
+  }
+  switch (release.relation) {
+    case "newer":
+      return { installable: true, upgrade: true };
+    case "same":
+      return { installable: false, reason: "installedSame", installedVersion };
+    case "older":
+      return { installable: false, reason: "installedNewer", installedVersion };
+    case "unknown":
+      return { installable: false, reason: "installedUnknown", installedVersion };
+    default:
+      // No relation despite an installed version. The backend computes one for every release
+      // as soon as the inventory answers, so this only happens when the page is newer than
+      // its own backend (or a hand-edited bundle). Fall back to the previous behaviour —
+      // an enabled button — instead of blocking upgrades that definitely exist.
+      return { installable: true, upgrade: false };
+  }
+}
+
+/**
+ * Wording for a blocked install bar. One place for the five reasons, so the footer only has
+ * to place the text and `catalog.test.ts` can assert each locale without touching the DOM.
+ */
+export function installGateText(
+  gate: InstallGate,
+  release: ReleaseView | null,
+  copy: Copy = ZH_COPY,
+  target?: PlatformDto | null,
+): string {
+  if (gate.installable) return "";
+  const installed = gate.installedVersion ?? "";
+  switch (gate.reason) {
+    case "installedSame":
+      return copy.t("installBlockedSame", { installed });
+    case "installedNewer":
+      return copy.t("installBlockedOlder", { version: release?.version ?? "", installed });
+    case "installedUnknown":
+      return copy.t("installBlockedUnknown", { installed });
+    case "platformUnsupported":
+      return copy.t("installBlockedPlatform", {
+        version: release?.version ?? "",
+        platform: target ? platformId(target) : "",
+      });
+    case "noRelease":
+      return copy.t("noInstallableVersion");
+  }
+}
+
+/**
+ * Author strip. Builds only from the half that exists: a product with a repository and no
+ * forum account prints the GitHub login, and vice versa. `null` means neither half is there.
+ */
+export function authorView(
+  author: AuthorDto | null | undefined,
+  copy: Copy = ZH_COPY,
+): AuthorView | null {
+  if (!author) return null;
+  const username = (author.username ?? "").trim();
+  const displayName = (author.displayName ?? "").trim();
+  const avatarUrl = (author.avatarUrl ?? "").trim();
+  const login = (author.github?.login ?? "").trim();
+  const githubUrl = (author.github?.url ?? "").trim();
+
+  const forumName = displayName || username;
+  const name = forumName || (login ? `@${login}` : "");
+  if (!name) return null;
+
+  return {
+    name,
+    hasForum: forumName !== "",
+    handle: username && username !== forumName ? `@${username}` : null,
+    profileUrl: normalizeAssetUrl(author.profileUrl),
+    avatarUrl: avatarUrl === "" ? null : avatarUrl,
+    // A repository-only strip prints `@login`, whose first character is `@`; the letter tile
+    // must come from the login itself, not from the decoration.
+    initial: initialOf(forumName || login || name),
+    github: login && githubUrl ? { login, url: githubUrl } : null,
+  };
+}
+
 function pad(value: number): string {
   return value < 10 ? `0${value}` : `${value}`;
 }
@@ -599,7 +843,14 @@ export function formatDateTime(value: string): string {
   return `${formatDate(value)} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
-export function toCatalogItemView(item: CatalogItemDto, copy: Copy = ZH_COPY): CatalogItemView {
+export function toCatalogItemView(
+  item: CatalogItemDto,
+  copy: Copy = ZH_COPY,
+  target?: PlatformDto | null,
+): CatalogItemView {
+  // 老商城没有 `latestPlatforms`：回落并集，语义退化成「至少覆盖这些平台」——宁可少拦一次，
+  // 也不要把一份能装的目录整片标成不支持（D8）。
+  const latestPlatforms = item.latestPlatforms ?? item.platforms;
   return {
     slug: item.slug,
     extensionId: item.extensionId || item.slug,
@@ -623,6 +874,8 @@ export function toCatalogItemView(item: CatalogItemDto, copy: Copy = ZH_COPY): C
       },
       copy,
     ),
+    supported: supportsTarget(latestPlatforms, target),
+    supportedAnywhere: supportsTarget(item.platforms, target),
   };
 }
 
@@ -632,8 +885,13 @@ export function statusLabel(status: string, copy: Copy = ZH_COPY): string {
   return status || copy.t("statusUnknown");
 }
 
-export function toReleaseView(release: ReleaseDto, copy: Copy = ZH_COPY): ReleaseView {
+export function toReleaseView(
+  release: ReleaseDto,
+  copy: Copy = ZH_COPY,
+  target?: PlatformDto | null,
+): ReleaseView {
   const options = platformOptions(release.assets ?? [], copy);
+  const relation = isRelation(release.installedRelation) ? release.installedRelation : null;
   return {
     version: release.version,
     channel: release.channel,
@@ -644,14 +902,23 @@ export function toReleaseView(release: ReleaseDto, copy: Copy = ZH_COPY): Releas
     status: release.status,
     statusLabel: statusLabel(release.status, copy),
     installable: release.status === "published" && options.length > 0,
+    supported: supportsTarget(options, target),
+    relation,
+    relationLabel: relationLabel(relation, copy),
+    notesHtml: (release.notesHtml ?? "").trim(),
     digestPrefix: digestPrefix(release.digest ?? ""),
+    digest: release.digest ?? "",
     capabilities: release.capabilities ?? [],
     notes: release.notes ?? "",
     platforms: options,
   };
 }
 
-export function toProductView(product: ProductDto, copy: Copy = ZH_COPY): ProductView {
+export function toProductView(
+  product: ProductDto,
+  copy: Copy = ZH_COPY,
+  target?: PlatformDto | null,
+): ProductView {
   return {
     slug: product.slug,
     extensionId: product.extensionId,
@@ -660,6 +927,7 @@ export function toProductView(product: ProductDto, copy: Copy = ZH_COPY): Produc
     kindLabel: kindLabel(product.kind, copy),
     summary: product.summary,
     readme: product.readme,
+    author: authorView(product.author, copy),
     categoryLabel: categoryLabel(product.category, copy),
     socialImageUrl: product.socialImageUrl ?? null,
     iconUrl: product.iconUrl ?? null,
@@ -672,9 +940,13 @@ export function toProductView(product: ProductDto, copy: Copy = ZH_COPY): Produc
       copy,
     ),
     latestVersion: product.latestVersion ?? "",
-    releases: product.releases.map((release) => toReleaseView(release, copy)),
+    releases: product.releases.map((release) => toReleaseView(release, copy, target)),
     platforms: platformLabels(product.platforms ?? [], copy),
   };
+}
+
+function isRelation(value: unknown): value is InstalledRelation {
+  return value === "newer" || value === "same" || value === "older" || value === "unknown";
 }
 
 export function installableReleases(view: ProductView): ReleaseView[] {
@@ -695,23 +967,21 @@ function normalizeTarget(value: unknown): PlatformDto | null {
 
 /**
  * 默认平台优先选服务器自己的平台（插件后端在服务器上跑，安装目标也是服务器），
- * 其次是 any/any（主题），最后才退回第一个资产。避免在 linux 服务器上默认选中 darwin 包。
+ * 其次是 any/any（主题）。
+ *
+ * 已知 target 但两个都没有时返回 `null`：把异架构包装到 linux 服务器上是本轮要堵的事，
+ * 不能再退回「第一个资产」。只有 target 本身缺失（老商城）时才保留改动前的行为 ——
+ * 那时页面没有任何基准，硬选 null 会把整页安装按钮锁死。
  */
 export function defaultPlatform(
   release: ReleaseView | null,
   target?: PlatformDto | null,
 ): PlatformOption | null {
   if (!release || !release.platforms.length) return null;
-  if (target) {
-    const exact = release.platforms.find(
-      (option) => option.os === target.os && option.arch === target.arch,
-    );
-    if (exact) return exact;
-  }
-  const wildcard = release.platforms.find(
-    (option) => option.os === "any" && option.arch === "any",
-  );
-  return wildcard ?? release.platforms[0];
+  const wildcard = release.platforms.find((option) => isAnyPlatform(option));
+  if (!target) return wildcard ?? release.platforms[0] ?? null;
+  const exact = release.platforms.find((option) => samePlatform(option, target));
+  return exact ?? wildcard ?? null;
 }
 
 export function corePathForKind(kind: Kind): string {

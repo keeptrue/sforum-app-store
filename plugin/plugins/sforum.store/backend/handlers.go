@@ -198,9 +198,15 @@ func catalogQueryFromRequest(request *pluginwire.RouteRequest, settings storeSet
 		return catalogQuery{}, err
 	}
 
+	platformAll, err := catalogPlatform(params["platform"])
+	if err != nil {
+		return catalogQuery{}, err
+	}
+
 	query := catalogQuery{
 		Channel:     channel,
 		Compat:      compat,
+		PlatformAll: platformAll,
 		SForum:      build.CoreVersion,
 		SForumBuild: build.BuildVersion,
 	}
@@ -230,17 +236,45 @@ const (
 	compatModeAll        = "all"
 )
 
-// catalogCompat 是 compat 参数的唯一入口：只接受契约里的两个值，空值取默认
-// compatible。非法值直接拒绝，不做静默回退 —— 否则「我要 all」会被偷偷改回
-// compatible，页面看到的是被过滤过的目录却以为是全量。
+// catalogCompat 是 compat 参数的唯一入口：只接受契约里的两个显式值，空值表示
+// 「不指定」，原样留空 —— 由商城按宿主决定默认口径（开发版默认不过滤，发行版默认
+// 只看可安装）。插件确实知道宿主是不是 dev 构建，但口径规则属于商城：中间层补一个
+// 默认值会让两边各说各话，页面看到的就不是本次真正生效的过滤强度。
+// 非法值直接拒绝，不做静默回退 —— 否则「我要 all」会被偷偷改回 compatible，
+// 页面看到的是被过滤过的目录却以为是全量。
 func catalogCompat(raw string) (string, error) {
 	switch value := strings.TrimSpace(raw); value {
 	case "":
-		return compatModeCompatible, nil
+		return "", nil
 	case compatModeCompatible, compatModeAll:
 		return value, nil
 	default:
 		return "", errors.New("compat 只能是 compatible 或 all。")
+	}
+}
+
+// platform 参数是「架构维度」的列表口径，与 compat（版本维度）是两个独立轴：
+// compat 决定要不要藏掉宿主 coreVersion 装不上的包，platform 决定要不要藏掉
+// 当前架构跑不起来的包。两者都不能靠省略互相顶替。
+const (
+	platformModeStrict = "strict"
+	platformModeAll    = "all"
+)
+
+// catalogPlatform 只回答一个问题：要不要把架构维度放宽成 all。
+//
+// 空值与 `strict` 都返回 false —— `platform=strict` 与省略在上游完全等价，所以插件
+// 不替调用方多发这个参数（多发只会让 ETag 抖动）。只有显式 `all` 才放宽。
+// 非法值直接拒绝，不做静默回退：把「我要看全部」悄悄改回 strict，会让管理员以为
+// 开关坏了，而页面看起来一切正常。
+func catalogPlatform(raw string) (bool, error) {
+	switch value := strings.TrimSpace(raw); value {
+	case "", platformModeStrict:
+		return false, nil
+	case platformModeAll:
+		return true, nil
+	default:
+		return false, errors.New("platform 只能是 strict 或 all。")
 	}
 }
 

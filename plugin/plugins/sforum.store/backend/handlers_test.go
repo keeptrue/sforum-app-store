@@ -81,8 +81,6 @@ func TestCatalogForwardsFiltersRuntimeTargetAndReshapesResponse(t *testing.T) {
 	want := map[string]string{
 		"channel": "beta", "q": "demo", "category": "tools", "cursor": "c1", "limit": "25",
 		"os": runtime.GOOS, "arch": runtime.GOARCH,
-		// compat 缺省即 compatible；宿主版本未知时它是唯一会出去的过滤参数。
-		"compat": compatModeCompatible,
 	}
 	if got := len(call.Query); got != len(want) {
 		t.Fatalf("upstream query keys = %v, want exactly %d keys", call.Query, len(want))
@@ -96,6 +94,10 @@ func TestCatalogForwardsFiltersRuntimeTargetAndReshapesResponse(t *testing.T) {
 		if call.Query.Has(key) {
 			t.Errorf("upstream query must never carry %s", key)
 		}
+	}
+	// 调用方没指定口径时不转发 compat：默认口径由商城按宿主决定，插件不替它补默认值。
+	if call.Query.Has("compat") {
+		t.Errorf("upstream query must not carry compat when the caller did not set it: %v", call.Query)
 	}
 
 	if got := values["total"]; got != float64(1) {
@@ -126,7 +128,7 @@ func TestCatalogForwardsFiltersRuntimeTargetAndReshapesResponse(t *testing.T) {
 	wantItemKeys := []string{
 		"slug", "extensionId", "name", "kind", "summary", "category", "iconUrl",
 		"socialImageUrl", "latestVersion", "installed", "updateAvailable",
-		"sforumVersion", "updatedAt", "platforms", "compatibility",
+		"sforumVersion", "updatedAt", "platforms", "latestPlatforms", "compatibility",
 	}
 	if len(item) != len(wantItemKeys) {
 		t.Errorf("item keys = %v, want %v", item, wantItemKeys)
@@ -369,6 +371,22 @@ func TestProductReshapesDetail(t *testing.T) {
 	if got := product["repoUrl"]; got != "https://github.com/example/demo" {
 		t.Errorf("repoUrl = %v", got)
 	}
+	author := objectAt(t, product, "author")
+	if author["username"] != "ada" || author["displayName"] != "Ada Lovelace" {
+		t.Errorf("author forum half = %v", author)
+	}
+	if got := author["avatarUrl"]; got != "https://forum.example.test/avatars/ada.png" {
+		t.Errorf("author.avatarUrl = %v", got)
+	}
+	// 论坛主页地址由商城按 issuer 基址拼好；插件只做过 http(s) 校验就原样透出。
+	if got := author["profileUrl"]; got != "https://forum.example.test/u/ada" {
+		t.Errorf("author.profileUrl = %v", got)
+	}
+	// 上游给的 url 被丢掉，链接由插件按 login 重新拼。
+	github := objectAt(t, author, "github")
+	if github["login"] != "example" || github["url"] != "https://github.com/example" {
+		t.Errorf("author.github = %v", github)
+	}
 	if got := product["latestVersion"]; got != "1.2.0" {
 		t.Errorf("latestVersion = %v", got)
 	}
@@ -384,6 +402,14 @@ func TestProductReshapesDetail(t *testing.T) {
 	}
 	if release["notes"] != "first" {
 		t.Errorf("release notes = %v", release["notes"])
+	}
+	// 原文与渲染结果同时透出：页面优先注入 notesHtml，老商城没有这个键才退回纯文本。
+	if release["notesHtml"] != "<p>first</p>" {
+		t.Errorf("release notesHtml = %v", release["notesHtml"])
+	}
+	// 宿主清单读不到时不算关系：页面按「未安装」处理，不写这个键。
+	if _, exists := release["installedRelation"]; exists {
+		t.Errorf("release leaked installedRelation without inventory: %v", release["installedRelation"])
 	}
 	if release["digest"] != strings.Repeat("a", 64) {
 		t.Errorf("release digest = %v", release["digest"])

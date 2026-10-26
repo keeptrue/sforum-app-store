@@ -25,6 +25,7 @@
               "latestVersion",
               "sforumVersion",
               "platforms",
+              "latestPlatforms",
               "compatibility"
             ],
             "properties": {
@@ -118,6 +119,25 @@
                   }
                 }
               },
+              "latestPlatforms": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "os",
+                    "arch"
+                  ],
+                  "properties": {
+                    "os": {
+                      "type": "string"
+                    },
+                    "arch": {
+                      "type": "string"
+                    }
+                  }
+                }
+              },
               "compatibility": {
                 "type": "object",
                 "additionalProperties": false,
@@ -176,6 +196,13 @@
               "type": "string"
             }
           }
+        },
+        "compat": {
+          "description": "本次查询实际生效的兼容口径回显；服务端未回显时省略。",
+          "enum": [
+            "compatible",
+            "all"
+          ]
         },
         "stale": {
           "type": "boolean"

@@ -42,35 +42,61 @@ type upstreamAsset struct {
 }
 
 type upstreamRelease struct {
-	Version       string          `json:"version"`
-	Channel       string          `json:"channel"`
-	PublishedAt   string          `json:"publishedAt"`
-	SForumVersion string          `json:"sforumVersion"`
-	Status        string          `json:"status"`
-	Digest        string          `json:"digest"`
-	Notes         *string         `json:"notes"`
-	Capabilities  []string        `json:"capabilities"`
-	Assets        []upstreamAsset `json:"assets"`
+	Version       string `json:"version"`
+	Channel       string `json:"channel"`
+	PublishedAt   string `json:"publishedAt"`
+	SForumVersion string `json:"sforumVersion"`
+	Status        string `json:"status"`
+	Digest        string `json:"digest"`
+	// Notes 是 GitHub Release 原文（Markdown 源），NotesHTML 是商城渲染并消毒后的 HTML。
+	// 两者都缺表示这个版本没有正文；页面优先用 NotesHTML，缺了才退回 Notes 的纯文本。
+	Notes        *string         `json:"notes"`
+	NotesHTML    *string         `json:"notesHtml"`
+	Capabilities []string        `json:"capabilities"`
+	Assets       []upstreamAsset `json:"assets"`
+}
+
+// upstreamAuthor 是 ProductDetail.author：一半来自论坛账号，一半来自绑定仓库的
+// GitHub 账号（installation 的 account.login）。两半各自可为空，插件不互相替补。
+type upstreamAuthor struct {
+	Username    *string `json:"username"`
+	DisplayName *string `json:"displayName"`
+	AvatarURL   *string `json:"avatarUrl"`
+	// ProfileURL 是商城按 issuer 基址拼出的论坛个人主页地址。插件不再自己拼：它没有论坛
+	// 域名（管理页桥不带站点地址），拿不到就不给链接，绝不让用户名指向一个猜出来的路径。
+	ProfileURL *string         `json:"profileUrl"`
+	Github     *upstreamGithub `json:"github"`
+}
+
+type upstreamGithub struct {
+	Login string `json:"login"`
+	// URL 上游会给，但插件只认 login 并在本地重新拼：地址只有一个合法形态
+	// （https://github.com/<login>），接受上游整串等于把「链接指向哪里」交给数据。
+	URL string `json:"url"`
 }
 
 // upstreamSummary 是目录项与详情共有的字段集合；详情在它之上追加
 // readme / repoUrl / releases。产品介绍只有 readme 一个来源，没有手写正文与截图。
 type upstreamSummary struct {
-	Slug           string                 `json:"slug"`
-	ExtensionID    string                 `json:"extensionId"`
-	Name           string                 `json:"name"`
-	Kind           string                 `json:"kind"`
-	Summary        string                 `json:"summary"`
-	Category       *string                `json:"category"`
-	Tags           []string               `json:"tags"`
-	Owner          *string                `json:"owner"`
-	IconURL        *string                `json:"iconUrl"`
-	SocialImageURL *string                `json:"socialImageUrl"`
-	LatestVersion  string                 `json:"latestVersion"`
-	SForumVersion  string                 `json:"sforumVersion"`
-	UpdatedAt      string                 `json:"updatedAt"`
-	Platforms      []upstreamPlatform     `json:"platforms"`
-	Compatibility  *upstreamCompatibility `json:"compatibility"`
+	Slug           string             `json:"slug"`
+	ExtensionID    string             `json:"extensionId"`
+	Name           string             `json:"name"`
+	Kind           string             `json:"kind"`
+	Summary        string             `json:"summary"`
+	Category       *string            `json:"category"`
+	Tags           []string           `json:"tags"`
+	Owner          *string            `json:"owner"`
+	IconURL        *string            `json:"iconUrl"`
+	SocialImageURL *string            `json:"socialImageUrl"`
+	LatestVersion  string             `json:"latestVersion"`
+	SForumVersion  string             `json:"sforumVersion"`
+	UpdatedAt      string             `json:"updatedAt"`
+	Platforms      []upstreamPlatform `json:"platforms"`
+	// LatestPlatforms 是卡片指向那一版（latestVersion）覆盖的平台。老商城没有这个
+	// 字段，解出来是 nil；上游给 `[]` 表示「这一版没有发布资产」，两者不是一回事，
+	// 所以不能把 nil 和空切片一起处理（见 latestPlatformValues）。
+	LatestPlatforms []upstreamPlatform     `json:"latestPlatforms"`
+	Compatibility   *upstreamCompatibility `json:"compatibility"`
 }
 
 type upstreamCatalog struct {
@@ -78,12 +104,16 @@ type upstreamCatalog struct {
 	Total         int                    `json:"total"`
 	NextCursor    *string                `json:"nextCursor"`
 	Compatibility *upstreamCompatibility `json:"compatibility"`
+	// Compat 是商城回显的「本次实际生效口径」（compatible / all）。老商城不发送，
+	// 留空即不写进插件响应，页面按 compatibility.estimated 推断。
+	Compat string `json:"compat"`
 }
 
 type upstreamProduct struct {
 	upstreamSummary
 	Readme   *upstreamReadme   `json:"readme"`
 	RepoURL  *string           `json:"repoUrl"`
+	Author   *upstreamAuthor   `json:"author"`
 	Releases []upstreamRelease `json:"releases"`
 }
 
@@ -106,6 +136,8 @@ type upstreamDownloadURL struct {
 
 var (
 	sha256Pattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
+	// GitHub 账号：字母数字与连字符，1–39 个字符（GitHub 自身的上限）。
+	githubLoginPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]{0,38}$`)
 )
 
 // validate 保证只把形状正确的签名链接交给管理页：宿主随后会拿 sha256 校验下载包，
@@ -132,6 +164,14 @@ func downloadURLValues(result upstreamDownloadURL) map[string]any {
 		"expiresAt": result.ExpiresAt,
 	}
 }
+
+// installedRelation 的取值集合，页面按这四个键出文案与门禁。
+const (
+	relationNewer   = "newer"
+	relationSame    = "same"
+	relationOlder   = "older"
+	relationUnknown = "unknown"
+)
 
 const (
 	channelStable = "stable"
@@ -184,6 +224,11 @@ func catalogResponseValues(result catalogResult, baseURL string, inventory insta
 	if cursor := optionalText(result.page.NextCursor); cursor != "" {
 		values["nextCursor"] = cursor
 	}
+	// 商城回显的生效口径原样透出；没有回显就不写这个键，页面会按 estimated 推断。
+	// 不在这里补默认值：口径规则属于商城，补一个会让页面与真实过滤强度脱节。
+	if compat := strings.TrimSpace(result.page.Compat); compat != "" {
+		values["compat"] = compat
+	}
 	return values, dropped
 }
 
@@ -207,7 +252,9 @@ func catalogItemValues(item upstreamSummary, baseURL string, inventory installed
 		// 清单里的宿主约束，原样透出：目录行展示它，判定仍由 core 在安装时做。
 		"sforumVersion": item.SForumVersion,
 		"platforms":     platformValues(item.Platforms),
-		"compatibility": compatibilityValues(item.Compatibility),
+		// 卡片徽标判定的是「最新这一版能不能装」，不是「有没有某一版能装」。
+		"latestPlatforms": latestPlatformValues(item),
+		"compatibility":   compatibilityValues(item.Compatibility),
 		// 已装信息只来自宿主清单：读不到就是 null / false，不推断。
 		"installed":       installedValues(installed, found),
 		"updateAvailable": updateAvailable(installed.Version, item.LatestVersion),
@@ -255,18 +302,19 @@ func productResponseValues(result productResult, baseURL string, inventory insta
 		return nil, 0, &upstreamError{category: errUpstreamFailure, kind: "invalid_product"}
 	}
 
+	// 清单先读：每个版本的 installedRelation 都相对它算，页面只做展示不再做版本比较。
+	installed, found := inventory.lookup(result.product.ExtensionID)
+
 	releases := make([]any, 0, len(result.product.Releases))
 	dropped := 0
 	for _, release := range result.product.Releases {
-		values, ok := releaseValues(release)
+		values, ok := releaseValues(release, installed.Version, found)
 		if !ok {
 			dropped++
 			continue
 		}
 		releases = append(releases, values)
 	}
-
-	installed, found := inventory.lookup(result.product.ExtensionID)
 	product := map[string]any{
 		"slug":            result.product.Slug,
 		"extensionId":     result.product.ExtensionID,
@@ -279,9 +327,11 @@ func productResponseValues(result productResult, baseURL string, inventory insta
 		"socialImageUrl":  absoluteAssetURL(baseURL, result.product.SocialImageURL),
 		"repoUrl":         nullableText(result.product.RepoURL),
 		"platforms":       platformValues(result.product.Platforms),
+		"latestPlatforms": latestPlatformValues(result.product.upstreamSummary),
 		"releases":        releases,
 		"installed":       installedValues(installed, found),
 		"updateAvailable": updateAvailable(installed.Version, result.product.LatestVersion),
+		"author":          authorValues(result.product.Author),
 	}
 	if latest := strings.TrimSpace(result.product.LatestVersion); latest != "" {
 		product["latestVersion"] = latest
@@ -317,7 +367,9 @@ func updateAvailable(installedVersion, latestVersion string) bool {
 	return current.LessThan(latest)
 }
 
-func releaseValues(release upstreamRelease) (map[string]any, bool) {
+// releaseValues 生成一个版本的 DTO。installedVersion / installedKnown 来自宿主清单：
+// 只用来算 installedRelation，拿不到清单就不写这个键（页面按未安装处理）。
+func releaseValues(release upstreamRelease, installedVersion string, installedKnown bool) (map[string]any, bool) {
 	if strings.TrimSpace(release.Version) == "" || !validChannel(release.Channel) {
 		return nil, false
 	}
@@ -334,13 +386,121 @@ func releaseValues(release upstreamRelease) (map[string]any, bool) {
 		"sforumVersion": release.SForumVersion,
 		"status":        release.Status,
 		"notes":         nullableText(release.Notes),
+		"notesHtml":     nullableText(release.NotesHTML),
 		"capabilities":  stringValues(release.Capabilities),
 		"assets":        assets,
 	}
 	if digest := strings.TrimSpace(release.Digest); digest != "" {
 		values["digest"] = digest
 	}
+	if relation := installedRelation(installedVersion, installedKnown, release.Version); relation != "" {
+		values["installedRelation"] = relation
+	}
 	return values, true
+}
+
+// installedRelation 描述「这个版本」相对「本机已装版本」的位置：
+//
+//	newer   可升级（选中版本高于已装）
+//	same    同版本（重装只会得到同一份候选）
+//	older   低于已装（降级，需要先卸载）
+//	unknown 有一端不是 semver，页面不做门禁只提示
+//
+// 空串表示宿主清单不可用，调用方不写这个键。比较用与 updateAvailable 同一个
+// Masterminds 实现：页面是零依赖手写 ESM，不能有第二套版本比较。
+func installedRelation(installedVersion string, installedKnown bool, releaseVersion string) string {
+	if !installedKnown {
+		return ""
+	}
+	current, err := semver.NewVersion(strings.TrimSpace(installedVersion))
+	if err != nil {
+		return relationUnknown
+	}
+	candidate, err := semver.NewVersion(strings.TrimSpace(releaseVersion))
+	if err != nil {
+		return relationUnknown
+	}
+	switch {
+	case candidate.Equal(current):
+		return relationSame
+	case candidate.GreaterThan(current):
+		return relationNewer
+	default:
+		return relationOlder
+	}
+}
+
+// authorValues 映射 author。两半都为空时返回 nil（页面不画作者条）；只有一半时只发一半，
+// 绝不拿另一半的名字填空。
+func authorValues(author *upstreamAuthor) any {
+	if author == nil {
+		return nil
+	}
+	username := trimmedText(author.Username)
+	displayName := trimmedText(author.DisplayName)
+	avatarURL := httpURLText(author.AvatarURL)
+
+	values := map[string]any{
+		"username":    nullableString(username),
+		"displayName": nullableString(displayName),
+		"avatarUrl":   nullableString(avatarURL),
+		"profileUrl":  nullableString(httpURLText(author.ProfileURL)),
+		"github":      nil,
+	}
+	if login := githubLogin(author.Github); login != "" {
+		values["github"] = map[string]any{
+			"login": login,
+			"url":   "https://github.com/" + login,
+		}
+	}
+	if values["username"] == nil && values["displayName"] == nil &&
+		values["avatarUrl"] == nil && values["profileUrl"] == nil && values["github"] == nil {
+		return nil
+	}
+	return values
+}
+
+// githubLogin 只接受 GitHub 允许的账号字符集：它会被拼进 https://github.com/<login>，
+// 放行 `/`、`?`、`#` 就等于让上游决定链接指向哪里。
+func githubLogin(github *upstreamGithub) string {
+	if github == nil {
+		return ""
+	}
+	login := strings.TrimSpace(github.Login)
+	if login == "" || !githubLoginPattern.MatchString(login) {
+		return ""
+	}
+	return login
+}
+
+// httpURLText 只放行绝对 http(s) 地址：头像交给 <img> 加载，协议路径不能被上游指定。
+func httpURLText(value *string) string {
+	trimmed := trimmedText(value)
+	if trimmed == "" {
+		return ""
+	}
+	parsed, err := url.Parse(trimmed)
+	if err != nil || parsed.Host == "" {
+		return ""
+	}
+	if parsed.Scheme != "https" && parsed.Scheme != "http" {
+		return ""
+	}
+	return trimmed
+}
+
+func trimmedText(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return strings.TrimSpace(*value)
+}
+
+func nullableString(value string) any {
+	if value == "" {
+		return nil
+	}
+	return value
 }
 
 func assetValues(asset upstreamAsset) (map[string]any, bool) {
@@ -357,8 +517,9 @@ func assetValues(asset upstreamAsset) (map[string]any, bool) {
 	}, true
 }
 
-// compatibilityValues 是 §6.2 的落点：插件从不发送宿主版本，所以上游缺字段、
-// 给了未知枚举都统一报 unknown + estimated=false，绝不自造兼容结论。
+// compatibilityValues 是 §6.2 的落点：上游缺字段、给了未知枚举都统一报 unknown +
+// estimated=false，绝不自造兼容结论。宿主版本已经由 setHostVersion 转发给商城，所以
+// 这里的 unknown 只表示「商城没给判定」，不再是「插件没报版本」。
 func compatibilityValues(compat *upstreamCompatibility) map[string]any {
 	if compat == nil {
 		return map[string]any{"status": compatibilityUnknown, "estimated": false}
@@ -375,6 +536,18 @@ func compatibilityValues(compat *upstreamCompatibility) map[string]any {
 	default:
 		return map[string]any{"status": compatibilityUnknown, "estimated": false}
 	}
+}
+
+// latestPlatformValues 输出「卡片指向那一版」的平台。
+//
+// 上游缺字段（老商城）时回落并集：语义退化成「至少覆盖这些平台」，宁可少拦一次，也
+// 不要把一份能装的目录整片标成不支持。上游给了空数组时照实输出空数组 —— 那是「这一
+// 版没有资产」，不是「不知道」，页面据此不拦安装。
+func latestPlatformValues(summary upstreamSummary) []any {
+	if summary.LatestPlatforms == nil {
+		return platformValues(summary.Platforms)
+	}
+	return platformValues(summary.LatestPlatforms)
 }
 
 func platformValues(platforms []upstreamPlatform) []any {

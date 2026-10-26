@@ -22,8 +22,13 @@ paths:
         - { name: category, in: query, schema: { type: string } }
         - { name: cursor, in: query, schema: { type: string } }
         - { name: limit, in: query, schema: { type: integer } }
-        # 宿主版本可用时的兼容性过滤强度：compatible 只列能装的（默认），all 全量。
-        - { name: compat, in: query, schema: { type: string, enum: [compatible, all], default: compatible } }
+        # 兼容性过滤强度：compatible 只列能装的，all 全量。缺省不转发，由商城按宿主
+        # 决定默认口径（开发版默认不过滤）；显式传值优先。
+        - { name: compat, in: query, schema: { type: string, enum: [compatible, all] } }
+        # 架构维度的列表口径：strict（缺省）只列当前架构能跑的，all 放宽可见性并让
+        # 卡片自己画「不支持当前架构」徽标。缺省与 strict 等价，所以插件只在显式 all
+        # 时才往上游发这个参数。os/arch 不由调用方决定——目标平台是本进程。
+        - { name: platform, in: query, schema: { type: string, enum: [strict, all] } }
       responses:
         "200":
           description: 目录页
