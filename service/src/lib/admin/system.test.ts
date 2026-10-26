@@ -305,15 +305,23 @@ describe("credential hygiene", () => {
     const health = await loadSystemHealth();
     const serialised = JSON.stringify(health);
 
-    expect(serialised).not.toContain("postgres://");
-    expect(serialised).not.toContain("postgresql://");
-    if (expected.password) expect(serialised).not.toContain(expected.password);
+    // 断言凭据「形态」，不断言裸值：CI 的库名/用户名/密码都叫 store，而
+    // connection.database 本来就要如实带出库名——按裸值断言会把正确 payload 判红。
+    expect(serialised).not.toContain(TEST_DATABASE_URL);
+    expect(serialised).not.toMatch(/postgres(?:ql)?:\/\//i);
+    expect(serialised).not.toMatch(/\/\/[^/\s@:]+:[^/\s@]*@/);
+    expect(serialised).not.toMatch(/(?:password|passwd|pwd|secret|token)\s*=/i);
+    if (expected.username && expected.password) {
+      // user:password 成对出现才是凭据；单独一个 "store" 可能只是库名。
+      expect(serialised).not.toContain(`${expected.username}:${expected.password}`);
+    }
     expect(serialised).not.toContain("ciphertext");
     expect(serialised).not.toContain("client_secret");
 
     expect(health.database.ok).toBe(true);
     if (!health.database.ok) return;
     expect(health.database.value.reachable).toBe(true);
+    // 结构级：connection 只允许 host + database，多出 user/password/port 任一字段都会红。
     expect(health.database.value.connection).toEqual({
       host: expected.hostname,
       database: expected.pathname.replace(/^\/+/, ""),
