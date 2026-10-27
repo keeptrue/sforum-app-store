@@ -158,6 +158,90 @@ export const storeRoles = pgTable(
   (table) => [primaryKey({ columns: [table.accountId, table.role] })],
 );
 
+export const installAuthRequestStatus = pgEnum("install_auth_request_status", [
+  "pending",
+  "approved",
+  "denied",
+  "consumed",
+  "expired",
+]);
+
+/**
+ * One "connect a forum to the store" authorization request, created by a plugin backend and
+ * approved by a forum account on `/connect/{id}`.
+ *
+ * The row is the whole state machine: `pending → approved|denied`, `approved → consumed`
+ * (exactly once, on token exchange), and `pending|approved → expired` once `expires_at`
+ * passes. Only `code_challenge` is stored — the verifier never leaves the plugin backend, so
+ * a leaked database row cannot be exchanged for a token.
+ */
+export const installAuthRequests = pgTable(
+  "install_auth_requests",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    /** S256 PKCE challenge, base64url without padding. */
+    codeChallenge: text("code_challenge").notNull(),
+    /** What the plugin calls itself. Untrusted, display-only, ≤64 chars. */
+    clientLabel: text("client_label"),
+    status: installAuthRequestStatus("status").notNull().default("pending"),
+    /** Set on approval; `set null` keeps the audit trail if the account is deleted. */
+    accountId: uuid("account_id").references(() => accounts.id, {
+      onDelete: "set null",
+    }),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    /** Polling floor, echoed to the plugin so it cannot hammer the status endpoint. */
+    intervalSeconds: integer("interval_seconds").notNull().default(2),
+    createdIp: text("created_ip"),
+    userAgent: text("user_agent"),
+    approvedAt: timestamp("approved_at", { withTimezone: true }),
+    consumedAt: timestamp("consumed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    index("install_auth_requests_status_expiry_idx").on(
+      table.status,
+      table.expiresAt,
+    ),
+    index("install_auth_requests_created_idx").on(table.createdAt),
+  ],
+);
+
+/**
+ * A long-lived account token held by a plugin backend (30 days), scoped to `download:issue`.
+ *
+ * Only the SHA-256 of the `sfo_…` bearer is stored: the plaintext exists once, in the
+ * exchange response, and afterwards only inside the host's encrypted secret store. A leaked
+ * database dump therefore yields no usable token.
+ */
+export const accountTokens = pgTable(
+  "account_tokens",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    tokenHash: text("token_hash").notNull(),
+    scope: text("scope").notNull().default("download:issue"),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    clientLabel: text("client_label"),
+    createdIp: text("created_ip"),
+    userAgent: text("user_agent"),
+    /** Throttled: at most one write per minute per token (see `touchAccountToken`). */
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("account_tokens_token_hash_idx").on(table.tokenHash),
+    index("account_tokens_account_idx").on(table.accountId),
+    index("account_tokens_expiry_idx").on(table.expiresAt),
+  ],
+);
+
 
 // Content-addressed uploads (images only; ZIPs never land here).
 export const assets = pgTable(
@@ -812,6 +896,12 @@ export const storeSettings = pgTable(
      * is also the only way to fix the address.
      */
     downloadMode: text("download_mode"),
+    /**
+     * `null` = follow `STORE_DOWNLOAD_AUTH_MODE` (the seed), which is `anonymous`. Text for
+     * the same reason as `download_mode`: a bad stored value falls back to the seed with a
+     * warning instead of making the row unreadable.
+     */
+    downloadAuthMode: text("download_auth_mode"),
     /** channel → `"<limit>/<seconds>"`; a missing key falls back to env/defaults. */
     rateLimits: jsonb("rate_limits").$type<Record<string, string>>(),
     updatedByAdminId: uuid("updated_by_admin_id").references(

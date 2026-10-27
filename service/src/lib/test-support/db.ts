@@ -10,6 +10,7 @@
  * limiter counters) keep their own statements.
  */
 export const TRUNCATE_TABLES = [
+  "account_tokens",
   "accounts",
   "admin_accounts",
   "admin_sessions",
@@ -19,6 +20,7 @@ export const TRUNCATE_TABLES = [
   "github_app_private_keys",
   "github_installations",
   "github_repos",
+  "install_auth_requests",
   "moderation_events",
   "oauth_issuers",
   "oauth_token_sets",

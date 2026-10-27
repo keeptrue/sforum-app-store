@@ -45,6 +45,16 @@ export type StoreConfig = {
    * a private repository's object URL carries its name, tag and filename.
    */
   downloadMode: "proxy" | "redirect";
+  /**
+   * Whether minting a download URL needs a store account.
+   *
+   * `anonymous` (default) is today's behaviour: published means installable. `account_required`
+   * makes `POST /api/v1/download-urls` require an account token, and the browser download route
+   * require a session. The switch exists so the store can ship the gate before every forum has
+   * upgraded its plugin: an old plugin in `account_required` gets a 401 and can only say
+   * "store unavailable".
+   */
+  downloadAuthMode: DownloadAuthMode;
   assetDir: string;
   sessionTtlSeconds: number;
   stateTtlSeconds: number;
@@ -126,6 +136,18 @@ function parseDownloadMode(raw: string | undefined): "proxy" | "redirect" {
   );
 }
 
+/** The two states of the install gate; anything else fails at boot. */
+export type DownloadAuthMode = "anonymous" | "account_required";
+
+function parseDownloadAuthMode(raw: string | undefined): DownloadAuthMode {
+  const value = raw?.trim().toLowerCase();
+  if (!value || value === "anonymous") return "anonymous";
+  if (value === "account_required") return "account_required";
+  throw new ConfigError(
+    `STORE_DOWNLOAD_AUTH_MODE must be "anonymous" or "account_required", got "${raw}"`,
+  );
+}
+
 function parseAdminSetupToken(raw: string | undefined): string | null {
   const token = raw?.trim();
   if (!token) return null;
@@ -158,6 +180,7 @@ export function getConfig(): StoreConfig {
   }
 
   const downloadMode = parseDownloadMode(process.env.STORE_DOWNLOAD_MODE);
+  const downloadAuthMode = parseDownloadAuthMode(process.env.STORE_DOWNLOAD_AUTH_MODE);
 
   // A production process reached through a proxy or tunnel while this value still points at
   // loopback emits redirects, OAuth callbacks and same-origin baselines that all lead back to
@@ -180,6 +203,7 @@ export function getConfig(): StoreConfig {
     sessionSecret,
     downloadSecret,
     downloadMode,
+    downloadAuthMode,
     assetDir: process.env.STORE_ASSET_DIR?.trim() || join(process.cwd(), ".data", "assets"),
     keyring: parseKeyring(requireEnv("STORE_SECRET_KEYS")),
     adminPath: parseAdminPath(process.env.STORE_ADMIN_PATH),

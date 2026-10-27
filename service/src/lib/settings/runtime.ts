@@ -7,6 +7,7 @@ import {
   getConfig,
   isLoopbackHost,
   type CookieName,
+  type DownloadAuthMode,
 } from "@/lib/config";
 import {
   loadRateLimitRules,
@@ -50,6 +51,10 @@ export type RuntimeConfig = {
   downloadMode: "proxy" | "redirect";
   /** Which layer answered: the settings row, or the `STORE_DOWNLOAD_MODE` seed. */
   downloadModeSource: "database" | "env";
+  /** Whether a download URL needs a store account (`anonymous` by default). */
+  downloadAuthMode: DownloadAuthMode;
+  /** Which layer answered: the settings row, or the `STORE_DOWNLOAD_AUTH_MODE` seed. */
+  downloadAuthModeSource: "database" | "env";
   rateLimits: Record<RateLimitChannel, RateLimitRule>;
   updatedAt: Date | null;
   updatedByAdminId: string | null;
@@ -75,6 +80,7 @@ type SettingsRow = {
   publicUrl: string | null;
   downloadTtlSeconds: number | null;
   downloadMode: string | null;
+  downloadAuthMode: string | null;
   rateLimits: Record<string, string> | null;
   updatedAt: Date;
   updatedByAdminId: string | null;
@@ -86,6 +92,7 @@ async function readRow(db: Db): Promise<SettingsRow | null> {
       publicUrl: storeSettings.publicUrl,
       downloadTtlSeconds: storeSettings.downloadTtlSeconds,
       downloadMode: storeSettings.downloadMode,
+      downloadAuthMode: storeSettings.downloadAuthMode,
       rateLimits: storeSettings.rateLimits,
       updatedAt: storeSettings.updatedAt,
       updatedByAdminId: storeSettings.updatedByAdminId,
@@ -139,6 +146,27 @@ function resolveDownloadMode(
   return { mode: seed, source: "env" };
 }
 
+/**
+ * The install gate: same shape and same failure policy as `resolveDownloadMode`. A hand-edited
+ * row that says something else falls back to the seed and is reported, because the wrong
+ * answer here either blocks every install or silently opens the gate.
+ */
+function resolveDownloadAuthMode(
+  row: SettingsRow | null,
+  warnings: string[],
+): { mode: DownloadAuthMode; source: "database" | "env" } {
+  const seed = getConfig().downloadAuthMode;
+  const stored = row?.downloadAuthMode?.trim().toLowerCase();
+  if (!stored) return { mode: seed, source: "env" };
+  if (stored === "anonymous" || stored === "account_required") {
+    return { mode: stored, source: "database" };
+  }
+  warnings.push(
+    `后台保存的下载登录要求无效（${row?.downloadAuthMode}），已回退到 STORE_DOWNLOAD_AUTH_MODE：${seed}`,
+  );
+  return { mode: seed, source: "env" };
+}
+
 function resolveRateLimits(row: SettingsRow | null, warnings: string[]) {
   const base = loadRateLimitRules();
   const overrides = row?.rateLimits ?? {};
@@ -166,6 +194,7 @@ function buildConfig(row: SettingsRow | null): RuntimeConfig {
   const warnings = [...resolved.warnings];
   const rateLimits = resolveRateLimits(row, warnings);
   const download = resolveDownloadMode(row, warnings);
+  const downloadAuth = resolveDownloadAuthMode(row, warnings);
 
   // Mirrors the boot-time warning in `getConfig()`: a routable deployment that believes it
   // lives on loopback emits callbacks nobody can reach. The console surfaces this per request;
@@ -185,6 +214,8 @@ function buildConfig(row: SettingsRow | null): RuntimeConfig {
     downloadTtlSource: row?.downloadTtlSeconds ? "database" : "default",
     downloadMode: download.mode,
     downloadModeSource: download.source,
+    downloadAuthMode: downloadAuth.mode,
+    downloadAuthModeSource: downloadAuth.source,
     rateLimits,
     updatedAt: row?.updatedAt ?? null,
     updatedByAdminId: row?.updatedByAdminId ?? null,
