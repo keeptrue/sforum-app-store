@@ -281,6 +281,67 @@ describe("connect flow", () => {
     expect(h.controller.element.textContent).toContain("过期");
   });
 
+  test("a failed start writes the reason into the already-open tab", async () => {
+    // 先开窗后请求：请求失败时那个标签页还是 about:blank。它必须被写成一句人话，
+    // 否则操作者手里只剩一张白纸，看不出是「连接失败」还是「页面坏了」。
+    let written = "";
+    let closed = false;
+    const h = harness(
+      (call) => {
+        if (call.path === AUTH_STATUS_PATH) {
+          return { mode: "account_required", connected: false, account: null, expiresAt: null };
+        }
+        return httpError("upstream_error", 502);
+      },
+      {
+        openWindow: () => ({
+          location: { href: "about:blank" },
+          close: () => {
+            closed = true;
+          },
+          document: {
+            title: "",
+            body: {
+              set textContent(value: string) {
+                written = value;
+              },
+            },
+          },
+        }),
+      },
+    );
+    await h.controller.load();
+    await h.controller.connect();
+    expect(closed).toBe(false);
+    expect(written).toContain("连接商城没有完成");
+    expect(written).toContain("连接商城失败");
+    expect(h.controller.snapshot().phase).toBe("error");
+  });
+
+  test("when the tab cannot be written it is closed instead", async () => {
+    let closed = false;
+    const h = harness(
+      (call) => {
+        if (call.path === AUTH_STATUS_PATH) {
+          return { mode: "account_required", connected: false, account: null, expiresAt: null };
+        }
+        return httpError("upstream_error", 502);
+      },
+      {
+        openWindow: () => ({
+          location: { href: "about:blank" },
+          close: () => {
+            closed = true;
+          },
+          // 没有 document：模拟跨源/只读文档
+        }),
+      },
+    );
+    await h.controller.load();
+    await h.controller.connect();
+    expect(closed).toBe(true);
+  });
+
   test("a blocked popup is reported instead of silently waiting", async () => {
     const h = harness(
       (call) => {

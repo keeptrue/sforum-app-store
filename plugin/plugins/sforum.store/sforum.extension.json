@@ -41,7 +41,7 @@
     "url": "https://github.com/keeptrue/sforum"
   },
   "backend": {
-    "digest": "df6f62fac2a5200c7fa56335961dce2cfd4dfee771c086081a3d94afa7221c2f",
+    "digest": "56a94fa1a25f605e085f09c42eb53a88752b2c0baa5bf3c313644b0a4ab34595",
     "entry": "backend/plugin",
     "hostApiVersion": "sforum.host@2",
     "protocolVersion": 2,
@@ -112,13 +112,13 @@
   ],
   "packageFiles": [
     {
-      "digest": "df6f62fac2a5200c7fa56335961dce2cfd4dfee771c086081a3d94afa7221c2f",
+      "digest": "56a94fa1a25f605e085f09c42eb53a88752b2c0baa5bf3c313644b0a4ab34595",
       "id": "sforum.store.file.backend",
       "kind": "executable",
       "path": "backend/plugin"
     },
     {
-      "digest": "ba95d809ce2571d2b37985e6c7475314f040f52b7976d8d96d25ba55d1e31b7a",
+      "digest": "9da5c8b7aa562074f66034bda0e2bc0245cab847437bc166656e92a7b73c5a7f",
       "id": "sforum.store.file.admin",
       "kind": "frontend",
       "path": "frontend/admin/dist/catalog.mjs"

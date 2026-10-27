@@ -48,8 +48,20 @@ export type AuthSnapshot = {
   message: string;
 };
 
-/** 新标签句柄：只用到 location.href 与 close（可选）。 */
-export type AuthTab = { location: { href: string }; close?: () => void } | null;
+/**
+ * 新标签句柄：导航用 `location.href`，失败时用 `document` 把原因写进那个标签页，
+ * 最后用 `close`（可选）。`document` 在真实浏览器里是 about:blank 的文档（与 opener 同源），
+ * 测试替身里可以没有。
+ */
+export type AuthTab = {
+  location: { href: string };
+  close?: () => void;
+  document?: {
+    title?: string;
+    body?: { textContent?: string } | null;
+    documentElement?: { textContent?: string } | null;
+  } | null;
+} | null;
 
 export type AuthDeps = {
   request: <T = unknown>(path: string, options?: Record<string, unknown>) => Promise<T>;
@@ -301,8 +313,11 @@ export function createAuthController(deps: AuthDeps): AuthController {
         body: {},
       });
     } catch (error) {
-      closeTab(tab);
-      patch({ phase: "error", message: authErrorMessage(errorCodeOf(error), copy) });
+      const message = authErrorMessage(errorCodeOf(error), copy);
+      // 先开窗后请求，请求失败时那个标签页还是 about:blank。把它写成一句人能读的话，
+      // 而不是留一张白纸让操作者以为「点坏了」。
+      explainInTab(tab, copy.t("authTabFailedTitle"), message);
+      patch({ phase: "error", message });
       return;
     }
     if (disposed) {
@@ -313,7 +328,7 @@ export function createAuthController(deps: AuthDeps): AuthController {
     requestId = readString(start?.requestId);
     const authorizeUrl = readString(start?.authorizeUrl);
     if (!requestId || !authorizeUrl) {
-      closeTab(tab);
+      explainInTab(tab, copy.t("authTabFailedTitle"), copy.t("authFailed"));
       patch({ phase: "error", message: copy.t("authFailed") });
       return;
     }
@@ -422,6 +437,28 @@ export function createAuthController(deps: AuthDeps): AuthController {
     disconnect,
     destroy,
   };
+}
+
+/**
+ * 把一个还是 about:blank 的标签页写成失败说明。
+ *
+ * 为什么不直接 `close()`：脚本开出的窗口通常能关，但一旦宿主/浏览器拒绝，操作者手里就留下
+ * 一张白纸，看不出是「连接失败」还是「页面坏了」。写一句话是两边都成立的结果；写不进去
+ * （跨源、文档只读）才退化成关闭。
+ */
+function explainInTab(tab: AuthTab, title: string, message: string) {
+  if (!tab) return;
+  try {
+    const doc = tab.document;
+    if (doc && doc.body) {
+      if (typeof doc.title === "string") doc.title = title;
+      doc.body.textContent = `${title}\n\n${message}`;
+      return;
+    }
+  } catch {
+    // 跨源或被拒绝：往下走，尝试关闭。
+  }
+  closeTab(tab);
 }
 
 function closeTab(tab: AuthTab) {

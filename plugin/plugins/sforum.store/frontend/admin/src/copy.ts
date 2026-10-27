@@ -195,6 +195,7 @@ const ZH = {
   authFailed: "连接商城失败，请稍后再试。",
   authFailedWith: "连接商城失败：{detail}",
   authPopupBlocked: "浏览器拦截了新标签。请允许弹窗后重试。",
+  authTabFailedTitle: "连接商城没有完成",
   loginRequiredAction: "登录后安装",
   waitingAuthAction: "等待商城授权…",
   loginRequiredHint: "商城要求登录：先在目录顶部点「连接商城」，之后安装都不再要求登录。",
@@ -394,6 +395,7 @@ const EN: Record<CopyKey, string> = {
   authFailed: "Could not connect the store. Try again later.",
   authFailedWith: "Could not connect the store: {detail}",
   authPopupBlocked: "The browser blocked the new tab. Allow pop-ups and retry.",
+  authTabFailedTitle: "Connecting the store did not finish",
   loginRequiredAction: "Sign in to install",
   waitingAuthAction: "Waiting for the store…",
   loginRequiredHint:

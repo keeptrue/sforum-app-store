@@ -181,6 +181,16 @@ func TestAuthStatusModes(t *testing.T) {
 		}
 	})
 
+	t.Run("a store that is merely unreachable is not reported as unsupported", func(t *testing.T) {
+		// 传输/5xx 失败与「旧商城没有这个端点」是两件事：前者该让操作者重试，
+		// 后者才该隐藏连接 UI。混成一句「版本不支持」会让人根本不去重试。
+		fake := newFakeUpstream(t, func(w http.ResponseWriter, _ *http.Request, _ int) {
+			w.WriteHeader(http.StatusInternalServerError)
+		})
+		server := authServer(t, fake, &fakeSecret{}, "")
+		assertErrorFor(t, invokeRoute(t, server, routeAuthStatusID, nil, nil), schemaAuthStatusResponse, http.StatusBadGateway, codeUpstreamError)
+	})
+
 	t.Run("an unconfigured store says so", func(t *testing.T) {
 		server := newTestStoreServer(t, storeSettings{})
 		assertErrorFor(t, invokeRoute(t, server, routeAuthStatusID, nil, nil), schemaAuthStatusResponse, http.StatusServiceUnavailable, codeNotConfigured)

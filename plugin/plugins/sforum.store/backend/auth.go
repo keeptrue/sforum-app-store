@@ -248,24 +248,30 @@ func challengeFor(verifier string) string {
 
 // authMode 返回商城当前的模式。旧商城（404）折叠成 unsupported：
 // 页面据此隐藏连接 UI，而不是显示一个永远失败的按钮。
-func (s *storeServer) authMode(ctx context.Context, settings storeSettings) string {
+// authMode 返回商城当前的模式。
+//
+// 三种结果必须分开，否则页面会说谎：
+//   - 拿到模式 → 原样返回；
+//   - 404 → `unsupported`（旧商城，不会改变，缓存它）；
+//   - 其它失败（传输、超时、5xx、形状不符）→ **不返回 unsupported**，把错误往上抛，
+//     由调用方按 upstream_error 处理。把「商城抖了一下」说成「这个商城版本不支持登录授权」
+//     会让操作者以为功能不存在，从而根本不去重试。
+func (s *storeServer) authMode(ctx context.Context, settings storeSettings) (string, error) {
 	now := time.Now()
 	if cached, ok := s.authModeCache.get(now); ok {
-		return cached
+		return cached, nil
 	}
 	mode, err := s.store.authMode(ctx, settings.CatalogBaseURL)
 	if err != nil {
 		if errors.Is(err, errUpstreamNotFound) {
 			// 旧商城不会改变，缓存它；否则每次页面加载都多一次 404。
 			s.authModeCache.set(authModeUnsupported, now)
-			return authModeUnsupported
+			return authModeUnsupported, nil
 		}
-		// 传输失败不写缓存：下一次挂载应该重试，而不是把「商城抖了一下」
-		// 变成 60 秒的「不支持」。
-		return authModeUnsupported
+		return "", err
 	}
 	s.authModeCache.set(mode.Mode, now)
-	return mode.Mode
+	return mode.Mode, nil
 }
 
 // credential 读出当前凭据（不校验是否过期）。
@@ -280,7 +286,10 @@ func (s *storeServer) handleAuthStatus(ctx context.Context, request *pluginwire.
 		return errorResponse(request.GetContext(), schemaAuthStatusResponse, http.StatusServiceUnavailable, codeNotConfigured, messageNotConfigured)
 	}
 
-	mode := s.authMode(ctx, settings)
+	mode, err := s.authMode(ctx, settings)
+	if err != nil {
+		return failureResponse(request.GetContext(), routeAuthStatusID, authFailure(err), err)
+	}
 	credential, connected := parseAccountCredential(settings.AccountToken)
 	now := time.Now()
 	connected = connected && credential.usable(now)
@@ -305,7 +314,11 @@ func (s *storeServer) handleAuthStart(ctx context.Context, request *pluginwire.R
 	if !settings.configured() {
 		return errorResponse(request.GetContext(), schemaAuthStartResponse, http.StatusServiceUnavailable, codeNotConfigured, messageNotConfigured)
 	}
-	switch mode := s.authMode(ctx, settings); mode {
+	mode, err := s.authMode(ctx, settings)
+	if err != nil {
+		return failureResponse(request.GetContext(), routeAuthStartID, authFailure(err), err)
+	}
+	switch mode {
 	case authModeUnsupported:
 		return errorResponse(request.GetContext(), schemaAuthStartResponse, http.StatusServiceUnavailable, codeAuthUnsupported, messageAuthUnsupported)
 	case authModeAnonymous:
