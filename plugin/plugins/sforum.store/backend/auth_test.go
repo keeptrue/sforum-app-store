@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"strings"
 	"sync"
@@ -564,6 +565,65 @@ func TestAuthRoutesAreNotLeakingTheTokenIntoErrors(t *testing.T) {
 	}
 	if strings.Contains(body, fake.baseURL()) {
 		t.Fatal("upstream base url leaked into a failure response")
+	}
+}
+
+func TestAuthFlowKeepsTheTokenOutOfLogs(t *testing.T) {
+	// 令牌是长期 bearer：日志里出现一次就等于泄露。整条流程（含兑换与写入）
+	// 只允许写路由 id 与账号 id。
+	const requestID = "44444444-4444-4444-8444-444444444444"
+	token := "sfo_" + strings.Repeat("i", 43)
+
+	var buffer strings.Builder
+	previous := log.Writer()
+	log.SetOutput(&buffer)
+	t.Cleanup(func() { log.SetOutput(previous) })
+
+	var fake *fakeUpstream
+	fake = newFakeUpstream(t, func(w http.ResponseWriter, r *http.Request, _ int) {
+		switch {
+		case r.URL.Path == upstreamAuthModePath:
+			writeUpstreamJSON(t, w, http.StatusOK, map[string]any{"mode": "account_required"}, nil)
+		case r.URL.Path == upstreamAuthRequestsPath:
+			writeUpstreamJSON(t, w, http.StatusOK, map[string]any{
+				"id":            requestID,
+				"authorize_url": fake.baseURL() + "/connect/" + requestID,
+				"expires_in":    300,
+				"interval":      2,
+			}, nil)
+		case strings.HasSuffix(r.URL.Path, "/token"):
+			writeUpstreamJSON(t, w, http.StatusOK, map[string]any{
+				"access_token": token,
+				"token_type":   "Bearer",
+				"expires_in":   2592000,
+				"expires_at":   time.Now().Add(30 * 24 * time.Hour).UTC().Format(time.RFC3339),
+				"scope":        "download:issue",
+				"account":      map[string]any{"id": "acc-1", "issuerKey": "forum", "username": "ada", "displayName": "Ada", "avatarUrl": ""},
+			}, nil)
+		default:
+			writeUpstreamJSON(t, w, http.StatusOK, map[string]any{"status": authStatusApproved}, nil)
+		}
+	})
+	secret := &fakeSecret{}
+	server := authServer(t, fake, secret, "")
+	assertJSONDocument(t, invokeRoute(t, server, routeAuthStartID, nil, nil), schemaAuthStartResponse)
+	polled := assertJSONDocument(t, invokeAuthPoll(t, server, requestID), schemaAuthPollResponse)
+	if polled["status"] != authStatusConnected {
+		t.Fatalf("poll did not connect: %#v", polled)
+	}
+
+	logged := buffer.String()
+	if logged == "" {
+		t.Fatal("expected the flow to log something, so the assertion is meaningful")
+	}
+	if strings.Contains(logged, token) {
+		t.Fatalf("token leaked into logs: %s", logged)
+	}
+	if strings.Contains(logged, fake.baseURL()) {
+		t.Fatalf("upstream base url leaked into logs: %s", logged)
+	}
+	if secret.stored().Token != token {
+		t.Fatal("the token must land in the host secret, not in the logs")
 	}
 }
 
