@@ -25,6 +25,7 @@ import {
 import { TRUNCATE_ALL } from "@/lib/test-support/db";
 import { maxVersion } from "@/lib/catalog/compat";
 import { encodeCursor } from "@/lib/catalog/cursor";
+import { MAX_EXTENSION_IDS, parseExtensionIds } from "@/lib/catalog/extension-ids";
 import {
   CATALOG_CACHE_CONTROL,
   etagForJson,
@@ -702,6 +703,7 @@ function query(overrides: Partial<CatalogQuery> = {}): CatalogQuery {
     q: null,
     category: null,
     kind: null,
+    extensionIds: null,
     cursor: null,
     limit: 18,
     ...overrides,
@@ -774,6 +776,7 @@ describe("parseCatalogQuery", () => {
         q: "mark",
         category: "content",
         kind: "plugin",
+        extensionIds: "sforum.theme-paper,sforum.markdown",
         limit: "5",
       }),
     );
@@ -790,6 +793,8 @@ describe("parseCatalogQuery", () => {
       q: "mark",
       category: "content",
       kind: "plugin",
+      // Sorted, so the same set in another order is the same query (and the same ETag).
+      extensionIds: ["sforum.markdown", "sforum.theme-paper"],
       cursor: null,
       limit: 5,
     });
@@ -805,6 +810,60 @@ describe("parseCatalogQuery", () => {
     expect(parsed.query.sforum).toBeNull();
     expect(parsed.query.q).toBeNull();
     expect(parsed.query.limit).toBe(18);
+  });
+
+  test("reads extensionIds as a sorted, de-duplicated batch filter", () => {
+    const parsed = parseCatalogQuery(
+      new URLSearchParams({
+        extensionIds: " sforum.theme-paper, sforum.markdown ,,sforum.theme-paper",
+      }),
+    );
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.query.extensionIds).toEqual(["sforum.markdown", "sforum.theme-paper"]);
+  });
+
+  test("treats an absent or blank extensionIds as no filter", () => {
+    for (const value of [null, "", "   ", ",", " , , "]) {
+      const params = new URLSearchParams();
+      if (value !== null) params.set("extensionIds", value);
+      const parsed = parseCatalogQuery(params);
+      expect(parsed.ok).toBe(true);
+      if (!parsed.ok) return;
+      expect(parsed.query.extensionIds).toBeNull();
+    }
+  });
+
+  test("rejects malformed extensionIds", () => {
+    for (const value of [
+      "SForum.markdown",
+      "-leading",
+      "sforum/markdown",
+      "sforum markdown",
+      "a".repeat(161),
+      "sforum.markdown;",
+    ]) {
+      expect(parseCatalogQuery(new URLSearchParams({ extensionIds: value }))).toEqual({
+        ok: false,
+        code: "invalid_query",
+      });
+    }
+    // 160 characters is the grammar's upper bound, not an off-by-one rejection.
+    expect(parseExtensionIds("a".repeat(160)).ok).toBe(true);
+  });
+
+  test("caps extensionIds at 200 distinct values", () => {
+    const batch = (count: number) =>
+      Array.from({ length: count }, (_, index) => `sforum.id-${index}`).join(",");
+
+    const boundary = parseExtensionIds(batch(MAX_EXTENSION_IDS));
+    expect(boundary.ok).toBe(true);
+    if (boundary.ok) expect(boundary.ids).toHaveLength(MAX_EXTENSION_IDS);
+
+    // Repeating a value must not count against the cap: it is still one distinct id.
+    expect(parseExtensionIds(`${batch(MAX_EXTENSION_IDS)},sforum.id-0`).ok).toBe(true);
+
+    expect(parseExtensionIds(batch(MAX_EXTENSION_IDS + 1))).toEqual({ ok: false });
   });
 
   test("accepts the limit boundaries", () => {
@@ -1346,6 +1405,68 @@ describe("filters", () => {
     expect(await slugs({ category: "content " })).toEqual([]);
   });
 
+  test("extensionIds keeps only the named products", async () => {
+    const { body } = await catalog({
+      extensionIds: ["sforum.theme-paper", "sforum.markdown"],
+    });
+    expect(body.items.map((item) => item.slug)).toEqual(["markdown", "paper"]);
+    expect(body.total).toBe(2);
+  });
+
+  test("unknown extensionIds are ignored rather than fatal", async () => {
+    const { body } = await catalog({
+      extensionIds: ["sforum.markdown", "sforum.unknown"],
+    });
+    expect(body.items.map((item) => item.slug)).toEqual(["markdown"]);
+    expect(body.total).toBe(1);
+  });
+
+  test("extensionIds composes with kind, channel and platform", async () => {
+    const both = ["sforum.markdown", "sforum.theme-paper"];
+    expect(await slugs({ extensionIds: both, kind: "theme" })).toEqual(["paper"]);
+    // The theme ships stable only, so the channel axis still narrows the filtered set.
+    expect(await slugs({ extensionIds: both, channel: "beta" })).toEqual(["markdown"]);
+
+    // Platform visibility applies to the filtered set exactly as it does to the full list:
+    // `strict` hides a product no candidate release supports on this host, `all` shows it.
+    expect(
+      await slugs({ extensionIds: ["sforum.mac-only"], os: "linux", arch: "amd64" }),
+    ).toEqual([]);
+    expect(
+      await slugs({
+        extensionIds: ["sforum.mac-only"],
+        os: "linux",
+        arch: "amd64",
+        platform: "all",
+      }),
+    ).toEqual(["mac-only"]);
+  });
+
+  test("extensionIds narrows total and pagination", async () => {
+    const both = ["sforum.markdown", "sforum.theme-paper"];
+    const first = await catalog({ extensionIds: both, limit: 1 });
+    expect(first.body.items).toHaveLength(1);
+    expect(first.body.total).toBe(2);
+    expect(first.body.nextCursor).not.toBeNull();
+
+    const second = await catalog({
+      extensionIds: both,
+      limit: 1,
+      cursor: first.body.nextCursor,
+    });
+    expect(second.body.items).toHaveLength(1);
+    expect(second.body.total).toBe(2);
+    expect(second.body.nextCursor).toBeNull();
+  });
+
+  test("extensionIds travels through the route parser", async () => {
+    const body = await catalogPage({
+      extensionIds: "sforum.theme-paper,sforum.markdown",
+    });
+    expect(body.items.map((item) => item.slug)).toEqual(["markdown", "paper"]);
+    expect(body.total).toBe(2);
+  });
+
   test("unknown filters yield an empty page", async () => {
     const { body } = await catalog({ q: "no-such-product" });
     expect(body.items).toEqual([]);
@@ -1483,6 +1604,12 @@ describe("ETag and conditional requests", () => {
       ],
       ["q", { q: "markdown" }, { q: null }],
       ["category", { category: "content" }, { category: null }],
+      // Same rows, different filter set: only the fingerprint can tell these apart.
+      [
+        "extensionIds",
+        { extensionIds: ["sforum.markdown"] },
+        { extensionIds: ["sforum.markdown", "sforum.unknown"] },
+      ],
       ["limit", { limit: 18 }, { limit: 100 }],
     ];
 
@@ -1491,6 +1618,15 @@ describe("ETag and conditional requests", () => {
       const b = await catalog(right);
       expect(`${name}:${a.etag === b.etag}`).toBe(`${name}:false`);
     }
+  });
+
+  test("extensionIds order does not change the validator", async () => {
+    const a = await catalog({ extensionIds: ["sforum.markdown", "sforum.theme-paper"] });
+    const b = await catalog({ extensionIds: ["sforum.theme-paper", "sforum.markdown"] });
+    expect(a.body.items.map((item) => item.slug)).toEqual(
+      b.body.items.map((item) => item.slug),
+    );
+    expect(a.etag).toBe(b.etag);
   });
 
   test("the page cursor changes the validator", async () => {
@@ -1521,6 +1657,7 @@ describe("catalog route errors", () => {
       { limit: "0" },
       { limit: "101" },
       { limit: "abc" },
+      { extensionIds: "SForum.markdown" },
     ]) {
       const response = await catalogGET(new Request(catalogUrl(params)));
       expect(response.status).toBe(400);

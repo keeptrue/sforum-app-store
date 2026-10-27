@@ -41,6 +41,7 @@ import {
   type ParsedConstraint,
 } from "@/lib/catalog/compat";
 import { decodeCursor, encodeCursor, type CatalogCursor } from "@/lib/catalog/cursor";
+import { parseExtensionIds } from "@/lib/catalog/extension-ids";
 import { releaseNotesHtml } from "@/lib/readme/notes";
 import { assetUrl } from "@/lib/storage/urls";
 
@@ -81,6 +82,12 @@ export type CatalogQuery = {
   category: string | null;
   /** `kind` is a shelf filter (plugin / theme), never a data claim about a product. */
   kind: "plugin" | "theme" | null;
+  /**
+   * Batch filter for "which of my installed extensions have an update?". Sorted and
+   * de-duplicated by `parseExtensionIds`; `null` means the parameter was absent (or blank),
+   * which is not the same as an empty result set.
+   */
+  extensionIds: string[] | null;
   cursor: string | null;
   limit: number;
 };
@@ -132,6 +139,12 @@ export function parseCatalogQuery(searchParams: URLSearchParams): CatalogQueryRe
   }
   const kind: "plugin" | "theme" | null = kindParam;
 
+  // Batch update check: the plugin sends the ids it has installed. An unreadable id is a
+  // caller bug, so it is a 400 rather than a silently narrower answer — a wrong "no update"
+  // would look exactly like a correct one.
+  const extensionIds = parseExtensionIds(searchParams.get("extensionIds"));
+  if (!extensionIds.ok) return { ok: false, code: "invalid_query" };
+
   // Unlike `compat`, this default never depends on the host build: omitting the parameter
   // is exactly `strict`, so a client that predates it keeps today's list.
   const platformParam = cleaned(searchParams.get("platform"));
@@ -158,6 +171,7 @@ export function parseCatalogQuery(searchParams: URLSearchParams): CatalogQueryRe
       q,
       category: cleaned(searchParams.get("category")),
       kind,
+      extensionIds: extensionIds.ids,
       cursor,
       limit,
     },
@@ -280,6 +294,7 @@ async function loadProductFacets(
     q?: string;
     category?: string;
     kind?: "plugin" | "theme";
+    extensionIds?: string[];
   },
 ): Promise<ProductFacets[]> {
   const conditions: SQL[] = [
@@ -293,6 +308,11 @@ async function loadProductFacets(
   if (filters.slug !== undefined) conditions.push(eq(products.slug, filters.slug));
   if (filters.category !== undefined) conditions.push(eq(products.category, filters.category));
   if (filters.kind !== undefined) conditions.push(eq(products.kind, filters.kind));
+  // Empty array = no filter, mirroring `parseExtensionIds` turning a blank parameter into
+  // `null`. `inArray` with `[]` would be a SQL `false` and answer "nothing" instead.
+  if (filters.extensionIds !== undefined && filters.extensionIds.length > 0) {
+    conditions.push(inArray(products.extensionId, filters.extensionIds));
+  }
   if (filters.q !== undefined) {
     const pattern = `%${escapeLike(filters.q)}%`;
     conditions.push(
@@ -772,6 +792,9 @@ function queryFingerprint(query: CatalogQuery): string {
     query.q,
     query.category,
     query.kind,
+    // Sorted defensively: `parseCatalogQuery` already sorts, but a direct caller that built
+    // the query object by hand must not get two validators for one row set.
+    query.extensionIds === null ? null : [...query.extensionIds].sort(),
     query.cursor,
     query.limit,
   ]);
@@ -805,6 +828,7 @@ export async function listCatalog(
     q: query.q ?? undefined,
     category: query.category ?? undefined,
     kind: query.kind ?? undefined,
+    extensionIds: query.extensionIds ?? undefined,
   });
   const versionsByProduct = await loadVersionRows(
     db,
