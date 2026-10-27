@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "sforum.store.auth-poll.request@1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["requestId"],
+  "properties": {
+    "requestId": { "type": "string", "minLength": 8, "maxLength": 64 }
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "sforum.store.auth-start.response@1",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requestId", "authorizeUrl", "expiresIn", "interval"],
+      "properties": {
+        "requestId": { "type": "string" },
+        "authorizeUrl": { "type": "string" },
+        "expiresIn": { "type": "integer", "minimum": 0 },
+        "interval": { "type": "integer", "minimum": 1 }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message"],
+      "properties": {
+        "code": { "type": "string" },
+        "message": { "type": "string" }
+      }
+    }
+  ]
+}

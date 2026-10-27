@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	pluginwire "github.com/keeptrue/sforum/apps/api/sdk/plugin/v2/gen/sforum/plugin/v2"
@@ -118,8 +119,29 @@ func (s *storeServer) handleInstallURL(ctx context.Context, request *pluginwire.
 		return errorResponse(request.GetContext(), schemaInstallURLResponse, http.StatusBadRequest, codeInvalidRequest, err.Error())
 	}
 
-	result, err := s.store.downloadURL(ctx, settings.CatalogBaseURL, payload)
+	// 连接过就把令牌带上；account_required 模式下商城要求它，anonymous 模式下
+	// 商城只是校验并审计。401 表示令牌过期/被撤销/账号停用——这时先把本地凭据清掉，
+	// 页面才会从「已连接」翻回「去连接」。
+	credential, connected := parseAccountCredential(settings.AccountToken)
+	bearer := ""
+	if connected {
+		if credential.usable(time.Now()) {
+			bearer = credential.Token
+		} else {
+			// 本地已知过期：不必让商城再拒一次，直接清掉并让页面去重新连接。
+			_ = s.clearAccountSecret(ctx, request.GetContext())
+			s.invalidateSettings()
+			return errorResponse(request.GetContext(), schemaInstallURLResponse, http.StatusUnauthorized, codeLoginRequired, messageLoginRequired)
+		}
+	}
+
+	result, err := s.store.downloadURL(ctx, settings.CatalogBaseURL, payload, bearer)
 	if err != nil {
+		if errors.Is(err, errUpstreamUnauthorized) {
+			_ = s.clearAccountSecret(ctx, request.GetContext())
+			s.invalidateSettings()
+			return errorResponse(request.GetContext(), schemaInstallURLResponse, http.StatusUnauthorized, codeLoginRequired, messageLoginRequired)
+		}
 		return failureResponse(request.GetContext(), routeInstallURLID, installURLFailure(err), err)
 	}
 	// 签名链接只出现在响应里：不落缓存、不写日志，也不回显 sha256 之外的任何字段。
@@ -154,6 +176,9 @@ func productFailure(err error) routeFailure {
 func installURLFailure(err error) routeFailure {
 	if errors.Is(err, errStoreBaseURL) {
 		return routeFailure{http.StatusServiceUnavailable, codeNotConfigured, messageNotConfigured}
+	}
+	if errors.Is(err, errUpstreamUnauthorized) {
+		return routeFailure{http.StatusUnauthorized, codeLoginRequired, messageLoginRequired}
 	}
 	// 商城对不可见产品/版本/平台一律回 404；其余 4xx 是请求本身有问题，
 	// 都不该让管理员看到「稍后再试」。

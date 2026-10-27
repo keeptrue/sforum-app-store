@@ -20,6 +20,7 @@
         "menu": true,
         "order": 30,
         "path": "/catalog",
+        "permission": "extension.plugin.manage",
         "view": "component"
       },
       {
@@ -40,7 +41,7 @@
     "url": "https://github.com/keeptrue/sforum"
   },
   "backend": {
-    "digest": "f8d59457ddff89576cc1d592ad274ccb72ea030ddd516b894780e3816691daee",
+    "digest": "df6f62fac2a5200c7fa56335961dce2cfd4dfee771c086081a3d94afa7221c2f",
     "entry": "backend/plugin",
     "hostApiVersion": "sforum.host@2",
     "protocolVersion": 2,
@@ -55,6 +56,7 @@
   "description": "在论坛后台浏览 SForum 应用商城，把选中的插件或主题交给宿主安装并启用（主题仍需在主题页激活；需要带 extension.install.enable 的 core）。",
   "id": "sforum.store",
   "includes": {
+    "adminSurfaces": "manifest/admin-surfaces.json",
     "langs": "manifest/langs",
     "settings": "manifest/settings.json"
   },
@@ -102,7 +104,7 @@
   "openapi": [
     {
       "contractVersion": "sforum.store.openapi.routes@1",
-      "digest": "48c00fe5eec5a0e8f496f9bb28835750da17ac19b58c458e0535625a70508f65",
+      "digest": "e6fe7ae996f382fd5654442dc33e564053ff767c27015085bcdf0b1bad70f73e",
       "id": "sforum.store.file.openapi-routes",
       "namespace": "sforum.store.api",
       "path": "openapi/routes.yaml"
@@ -110,7 +112,7 @@
   ],
   "packageFiles": [
     {
-      "digest": "f8d59457ddff89576cc1d592ad274ccb72ea030ddd516b894780e3816691daee",
+      "digest": "df6f62fac2a5200c7fa56335961dce2cfd4dfee771c086081a3d94afa7221c2f",
       "id": "sforum.store.file.backend",
       "kind": "executable",
       "path": "backend/plugin"
@@ -156,7 +158,21 @@
       "version": "1"
     },
     {
-      "digest": "48c00fe5eec5a0e8f496f9bb28835750da17ac19b58c458e0535625a70508f65",
+      "digest": "39aec2530b5aafb508aea6948e791fd3b45bd52a53527bf869f59a090fac6a3c",
+      "id": "sforum.store.admin.updates.props",
+      "kind": "schema",
+      "path": "schemas/admin-updates.props.json",
+      "version": "1"
+    },
+    {
+      "digest": "e740a0a438545ac0843411fa1e9fbe28ce3de703da7f54f823f95e48156b6066",
+      "id": "sforum.store.admin.updates.result",
+      "kind": "schema",
+      "path": "schemas/admin-updates.result.json",
+      "version": "1"
+    },
+    {
+      "digest": "e6fe7ae996f382fd5654442dc33e564053ff767c27015085bcdf0b1bad70f73e",
       "id": "sforum.store.file.openapi-routes",
       "kind": "openapi",
       "path": "openapi/routes.yaml"
@@ -167,15 +183,68 @@
       "kind": "schema",
       "path": "schemas/install-url.request.json",
       "version": "1"
+    },
+    {
+      "digest": "f8ab86a9b069b818173d8a9182268d0dbd911398315ebb4f7d13bd623531a645",
+      "id": "sforum.store.auth-status.response",
+      "kind": "schema",
+      "path": "schemas/auth-status.response.json",
+      "version": "1"
+    },
+    {
+      "digest": "f84505efb5eedf6b3aebdcc9d703ec5593593fedc40653cbede41c0824b8ae2d",
+      "id": "sforum.store.auth-start.response",
+      "kind": "schema",
+      "path": "schemas/auth-start.response.json",
+      "version": "1"
+    },
+    {
+      "digest": "8fa5e2853a15a0e46985a04d90d3fb381a09c4cdbbe928006769e4d03e65e3d9",
+      "id": "sforum.store.auth-poll.request",
+      "kind": "schema",
+      "path": "schemas/auth-poll.request.json",
+      "version": "1"
+    },
+    {
+      "digest": "a75066852ca37be4c5ceba5567b17d6e43c2d4507d330413d7fadb736674d599",
+      "id": "sforum.store.auth-poll.response",
+      "kind": "schema",
+      "path": "schemas/auth-poll.response.json",
+      "version": "1"
+    },
+    {
+      "digest": "a1baa6c7e64823c7bca3f086e571e41a95aa48a3635caa2c116e842b7bba6d4d",
+      "id": "sforum.store.auth-disconnect.response",
+      "kind": "schema",
+      "path": "schemas/auth-disconnect.response.json",
+      "version": "1"
+    },
+    {
+      "digest": "81b1c4075d9712f97d4a08a56ecb67ac8a849edcee080e21580117ea7babaff5",
+      "id": "sforum.store.auth-start.request",
+      "kind": "schema",
+      "path": "schemas/auth-start.request.json",
+      "version": "1"
+    },
+    {
+      "digest": "584df205cb133a238e049261a4c6ede14296abe7b92307b96e57b3a6dab5e404",
+      "id": "sforum.store.auth-disconnect.request",
+      "kind": "schema",
+      "path": "schemas/auth-disconnect.request.json",
+      "version": "1"
     }
+  ],
+  "permissions": [
+    "extension.view",
+    "extension.plugin.manage"
   ],
   "routes": [
     {
-      "access": "login",
+      "access": "permission",
       "action": "add",
       "contractVersion": "sforum.store.route.catalog@1",
       "fallback": "closed",
-      "guard": "core.guard.login",
+      "guard": "core.guard.permission",
       "handler": "sforum.store.route.catalog",
       "id": "sforum.store.route.catalog",
       "methods": [
@@ -183,15 +252,16 @@
       ],
       "mode": "http",
       "path": "/api/store/catalog",
+      "permission": "extension.plugin.manage",
       "responseSchema": "sforum.store.catalog.response@1",
       "timeoutMs": 15000
     },
     {
-      "access": "login",
+      "access": "permission",
       "action": "add",
       "contractVersion": "sforum.store.route.product@1",
       "fallback": "closed",
-      "guard": "core.guard.login",
+      "guard": "core.guard.permission",
       "handler": "sforum.store.route.product",
       "id": "sforum.store.route.product",
       "methods": [
@@ -199,15 +269,16 @@
       ],
       "mode": "http",
       "path": "/api/store/product",
+      "permission": "extension.plugin.manage",
       "responseSchema": "sforum.store.product.response@1",
       "timeoutMs": 15000
     },
     {
-      "access": "login",
+      "access": "permission",
       "action": "add",
       "contractVersion": "sforum.store.route.install-url@1",
       "fallback": "closed",
-      "guard": "core.guard.login",
+      "guard": "core.guard.permission",
       "handler": "sforum.store.route.install-url",
       "id": "sforum.store.route.install-url",
       "methods": [
@@ -215,13 +286,85 @@
       ],
       "mode": "http",
       "path": "/api/store/install-url",
+      "permission": "extension.plugin.manage",
       "requestSchema": "sforum.store.install-url.request@1",
       "responseSchema": "sforum.store.install-url.response@1",
+      "timeoutMs": 15000
+    },
+    {
+      "access": "permission",
+      "action": "add",
+      "contractVersion": "sforum.store.route.auth-status@1",
+      "fallback": "closed",
+      "guard": "core.guard.permission",
+      "handler": "sforum.store.route.auth-status",
+      "id": "sforum.store.route.auth-status",
+      "methods": [
+        "GET"
+      ],
+      "mode": "http",
+      "path": "/api/store/auth/status",
+      "permission": "extension.plugin.manage",
+      "responseSchema": "sforum.store.auth-status.response@1",
+      "timeoutMs": 15000
+    },
+    {
+      "access": "permission",
+      "action": "add",
+      "contractVersion": "sforum.store.route.auth-start@1",
+      "fallback": "closed",
+      "guard": "core.guard.permission",
+      "handler": "sforum.store.route.auth-start",
+      "id": "sforum.store.route.auth-start",
+      "methods": [
+        "POST"
+      ],
+      "mode": "http",
+      "path": "/api/store/auth/start",
+      "permission": "extension.plugin.manage",
+      "requestSchema": "sforum.store.auth-start.request@1",
+      "responseSchema": "sforum.store.auth-start.response@1",
+      "timeoutMs": 15000
+    },
+    {
+      "access": "permission",
+      "action": "add",
+      "contractVersion": "sforum.store.route.auth-poll@1",
+      "fallback": "closed",
+      "guard": "core.guard.permission",
+      "handler": "sforum.store.route.auth-poll",
+      "id": "sforum.store.route.auth-poll",
+      "methods": [
+        "POST"
+      ],
+      "mode": "http",
+      "path": "/api/store/auth/poll",
+      "permission": "extension.plugin.manage",
+      "requestSchema": "sforum.store.auth-poll.request@1",
+      "responseSchema": "sforum.store.auth-poll.response@1",
+      "timeoutMs": 15000
+    },
+    {
+      "access": "permission",
+      "action": "add",
+      "contractVersion": "sforum.store.route.auth-disconnect@1",
+      "fallback": "closed",
+      "guard": "core.guard.permission",
+      "handler": "sforum.store.route.auth-disconnect",
+      "id": "sforum.store.route.auth-disconnect",
+      "methods": [
+        "POST"
+      ],
+      "mode": "http",
+      "path": "/api/store/auth/disconnect",
+      "permission": "extension.plugin.manage",
+      "requestSchema": "sforum.store.auth-disconnect.request@1",
+      "responseSchema": "sforum.store.auth-disconnect.response@1",
       "timeoutMs": 15000
     }
   ],
   "sforumVersion": ">=3.0.17",
   "type": "plugin",
   "url": "https://github.com/keeptrue/sforum-app-store",
-  "version": "0.1.0"
+  "version": "0.1.1"
 }

@@ -22,12 +22,18 @@ const (
 
 	settingCatalogBaseURL = "sforum.store.catalog_base_url"
 	settingChannel        = "sforum.store.channel"
+	// settingAccountToken 是商城授权后由插件自己写入的 secret 设置
+	// （manifest/settings.json 里声明 type: secret）。内容见 accountCredential。
+	settingAccountToken = "sforum.store.account_token"
 )
 
 type storeSettings struct {
 	// CatalogBaseURL 为空表示运营还没配置商城地址；此时页面只显示配置提示。
 	CatalogBaseURL string
 	Channel        string
+	// AccountToken 是商城账号凭据的 JSON（accountCredential），空表示未连接。
+	// 宿主 own-settings 查询返回的是解密后的明文，所以这里能直接解析。
+	AccountToken string
 }
 
 func defaultSettings() storeSettings {
@@ -95,7 +101,7 @@ func (s *storeServer) loadSettings(ctx context.Context, routeCtx *protocolwire.R
 		PlanVersion:         hostQueryOwnSettingsPlan,
 		ResultSchemaId:      hostQueryOwnSettingsResult,
 		ResultSchemaVersion: hostQueryOwnSettingsVersion,
-		Fields:              []string{settingCatalogBaseURL, settingChannel},
+		Fields:              []string{settingCatalogBaseURL, settingChannel, settingAccountToken},
 	})
 	if err != nil || response == nil || response.GetError() != nil || len(response.GetRows()) == 0 {
 		return result, false
@@ -113,7 +119,16 @@ func (s *storeServer) loadSettings(ctx context.Context, routeCtx *protocolwire.R
 	if channel := strings.TrimSpace(stringValue(container[settingChannel])); channel == "beta" || channel == "stable" {
 		result.Channel = channel
 	}
+	result.AccountToken = strings.TrimSpace(stringValue(container[settingAccountToken]))
 	return result, true
+}
+
+// invalidateSettings 在写入或清除 secret 之后调用：下一次读取必须回 Host 取，
+// 否则页面会在 60 秒缓存里继续显示「未连接」。
+func (s *storeServer) invalidateSettings() {
+	s.settingsCache.mu.Lock()
+	s.settingsCache.fetchedAt = time.Time{}
+	s.settingsCache.mu.Unlock()
 }
 
 // hostCallContext 构造插件 → Host 调用上下文：Actor 必须清空，否则宿主以

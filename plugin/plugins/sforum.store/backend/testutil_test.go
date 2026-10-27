@@ -96,6 +96,7 @@ func newTestStoreServer(t *testing.T, settings storeSettings) *storeServer {
 		Server:           pluginv2.NewServer(),
 		store:            newStoreClient(),
 		settingsOverride: &settings,
+		pending:          newPendingAuthStore(),
 	}
 }
 

@@ -6,7 +6,10 @@
     "groups": [
       {
         "id": "catalog",
-        "label": { "zh-CN": "商城连接", "en-US": "Store connection" },
+        "label": {
+          "zh-CN": "商城连接",
+          "en-US": "Store connection"
+        },
         "columns": 1
       }
     ],
@@ -14,10 +17,25 @@
       {
         "id": "install-scope",
         "tone": "info",
-        "title": { "zh-CN": "安装只到暂存", "en-US": "Installs stop at staged" },
+        "title": {
+          "zh-CN": "安装只到暂存",
+          "en-US": "Installs stop at staged"
+        },
         "body": {
           "zh-CN": "商城页面只能把包交给宿主暂存。启用、信任与升级一律由管理员在 core 的扩展页面完成；商城不会代劳，也不会后台静默安装。",
           "en-US": "The store page can only hand a package to the Host for staging. Enabling, trusting and upgrading always happen in core; the store never does it silently."
+        }
+      },
+      {
+        "id": "account-token",
+        "tone": "info",
+        "title": {
+          "zh-CN": "商城登录令牌由插件写入",
+          "en-US": "The store token is written by the plugin"
+        },
+        "body": {
+          "zh-CN": "「商城登录令牌」是插件在商城授权后自动写入的加密设置，设置页只显示「已配置」。手动填写只用于迁移；要断开连接，请到商城页面点「断开连接」，不要在这里清空。",
+          "en-US": "The store account token is an encrypted setting the plugin writes after you approve the store. This page only shows whether it is configured. Filling it by hand is for migrations only; to disconnect, use the store page instead of clearing this field."
         }
       }
     ]
@@ -25,7 +43,10 @@
   "fields": [
     {
       "key": "sforum.store.catalog_base_url",
-      "label": { "zh-CN": "商城地址", "en-US": "Store base URL" },
+      "label": {
+        "zh-CN": "商城地址",
+        "en-US": "Store base URL"
+      },
       "description": {
         "zh-CN": "商城服务端基址（https）。留空时管理页只显示配置提示，不会发起任何请求。",
         "en-US": "Base URL of the store service (https). When empty the admin page shows a setup hint and makes no requests."
@@ -37,7 +58,10 @@
     },
     {
       "key": "sforum.store.channel",
-      "label": { "zh-CN": "默认频道", "en-US": "Default channel" },
+      "label": {
+        "zh-CN": "默认频道",
+        "en-US": "Default channel"
+      },
       "description": {
         "zh-CN": "stable 只列稳定版；beta 会同时列出预发布版本。",
         "en-US": "stable lists stable releases only; beta also lists pre-releases."
@@ -45,9 +69,35 @@
       "type": "select",
       "default": "stable",
       "options": [
-        { "value": "stable", "label": { "zh-CN": "稳定版", "en-US": "Stable" } },
-        { "value": "beta", "label": { "zh-CN": "含预发布", "en-US": "Include pre-releases" } }
+        {
+          "value": "stable",
+          "label": {
+            "zh-CN": "稳定版",
+            "en-US": "Stable"
+          }
+        },
+        {
+          "value": "beta",
+          "label": {
+            "zh-CN": "含预发布",
+            "en-US": "Include pre-releases"
+          }
+        }
       ],
+      "groupId": "catalog"
+    },
+    {
+      "key": "sforum.store.account_token",
+      "label": {
+        "zh-CN": "商城登录令牌",
+        "en-US": "Store account token"
+      },
+      "description": {
+        "zh-CN": "由插件在商城授权后自动写入；手动填写只用于迁移。设置页只显示「已配置」，不会回显令牌。",
+        "en-US": "Written by the plugin after the store authorises this forum; manual entry is for migrations only. The page shows only whether it is set and never echoes the token."
+      },
+      "type": "secret",
+      "default": "",
       "groupId": "catalog"
     }
   ]

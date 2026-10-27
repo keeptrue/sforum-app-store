@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "sforum.store.auth-poll.response@1",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "account", "expiresAt"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["pending", "connected", "denied", "expired", "consumed"]
+        },
+        "account": {
+          "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/account" }]
+        },
+        "expiresAt": {
+          "oneOf": [{ "type": "null" }, { "type": "string" }]
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message"],
+      "properties": {
+        "code": { "type": "string" },
+        "message": { "type": "string" }
+      }
+    }
+  ],
+  "$defs": {
+    "account": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "issuerKey", "username", "displayName", "avatarUrl"],
+      "properties": {
+        "id": { "type": "string" },
+        "issuerKey": { "type": "string" },
+        "username": { "type": "string" },
+        "displayName": { "type": "string" },
+        "avatarUrl": { "type": "string" }
+      }
+    }
+  }
+}

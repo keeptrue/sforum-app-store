@@ -1,0 +1,8 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "sforum.store.sforum.store.auth-disconnect.request@1",
+  "description": "空请求体：这两个动作没有参数，所有输入都来自本地设置与宿主上下文。页面必须发送 `{}`。",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {}
+}

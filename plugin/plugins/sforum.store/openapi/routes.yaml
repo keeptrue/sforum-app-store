@@ -14,7 +14,8 @@ paths:
       summary: 商城目录（代理）
       x-sforum-route-id: sforum.store.route.catalog
       x-sforum-contract-version: sforum.store.route.catalog@1
-      x-sforum-guard: core.guard.login
+      x-sforum-guard: core.guard.permission
+      x-sforum-permission: extension.plugin.manage
       x-sforum-response-schema: sforum.store.catalog.response@1
       parameters:
         - { name: channel, in: query, schema: { type: string, enum: [stable, beta] } }
@@ -48,7 +49,8 @@ paths:
       summary: 产品详情（代理）
       x-sforum-route-id: sforum.store.route.product
       x-sforum-contract-version: sforum.store.route.product@1
-      x-sforum-guard: core.guard.login
+      x-sforum-guard: core.guard.permission
+      x-sforum-permission: extension.plugin.manage
       x-sforum-response-schema: sforum.store.product.response@1
       parameters:
         - { name: slug, in: query, required: true, schema: { type: string } }
@@ -71,7 +73,8 @@ paths:
       summary: 为选中资产签发商城下载链接
       x-sforum-route-id: sforum.store.route.install-url
       x-sforum-contract-version: sforum.store.route.install-url@1
-      x-sforum-guard: core.guard.login
+      x-sforum-guard: core.guard.permission
+      x-sforum-permission: extension.plugin.manage
       x-sforum-request-schema: sforum.store.install-url.request@1
       x-sforum-response-schema: sforum.store.install-url.response@1
       requestBody:
@@ -87,9 +90,140 @@ paths:
             application/json:
               schema:
                 $ref: '../schemas/install-url.response.json'
-        default:
-          description: 错误文档（invalid_request / asset_not_found / upstream_error）
+        "401":
+          description: |
+            商城要求登录（account_required）且本地没有可用令牌，或令牌已被撤销/过期/账号停用。
+            插件会清掉本地凭据并把 code 设为 login_required，页面据此回到「连接商城」。
           content:
             application/json:
               schema:
                 $ref: '../schemas/install-url.response.json'
+        default:
+          description: 错误文档（invalid_request / asset_not_found / login_required / upstream_error）
+          content:
+            application/json:
+              schema:
+                $ref: '../schemas/install-url.response.json'
+  /api/store/auth/status:
+    get:
+      operationId: sforum.store.api.authStatus
+      summary: 商城的登录要求与本地连接状态
+      description: |
+        `mode=unsupported` 表示商城没有 `/api/v1/auth/mode`（旧商城），页面据此隐藏连接 UI
+        并让安装走匿名路径。`connected` 由本地凭据（宿主加密 secret）决定，不额外打商城。
+      x-sforum-route-id: sforum.store.route.auth-status
+      x-sforum-contract-version: sforum.store.route.auth-status@1
+      x-sforum-guard: core.guard.permission
+      x-sforum-permission: extension.plugin.manage
+      x-sforum-response-schema: sforum.store.auth-status.response@1
+      responses:
+        "200":
+          description: 模式与连接状态
+          content:
+            application/json:
+              schema:
+                $ref: '../schemas/auth-status.response.json'
+        default:
+          description: 错误文档（not_configured）
+          content:
+            application/json:
+              schema:
+                $ref: '../schemas/auth-status.response.json'
+  /api/store/auth/start:
+    post:
+      operationId: sforum.store.api.authStart
+      summary: 发起一次商城授权（PKCE）
+      description: |
+        插件生成 verifier 并只留在内存，把 S256 challenge 交给商城，返回商城的授权页地址。
+        `authorizeUrl` 的 origin 必须与配置的商城地址一致，否则按上游失败处理。
+      x-sforum-route-id: sforum.store.route.auth-start
+      x-sforum-contract-version: sforum.store.route.auth-start@1
+      x-sforum-guard: core.guard.permission
+      x-sforum-permission: extension.plugin.manage
+      x-sforum-request-schema: sforum.store.auth-start.request@1
+      x-sforum-response-schema: sforum.store.auth-start.response@1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '../schemas/auth-start.request.json'
+      responses:
+        "200":
+          description: 请求 id 与授权页地址
+          content:
+            application/json:
+              schema:
+                $ref: '../schemas/auth-start.response.json'
+        default:
+          description: |
+            错误文档（not_configured / auth_unsupported / auth_not_required / upstream_error）
+          content:
+            application/json:
+              schema:
+                $ref: '../schemas/auth-start.response.json'
+  /api/store/auth/poll:
+    post:
+      operationId: sforum.store.api.authPoll
+      summary: 轮询授权状态（批准后兑换并写入宿主 secret）
+      description: |
+        页面按 `auth/start` 返回的 interval 轮询。`connected` 表示令牌已经写进宿主加密的
+        secret 设置；`consumed` 表示这次请求已被兑换过（上一次写 secret 失败后重试会看到它），
+        页面应重新发起。
+      x-sforum-route-id: sforum.store.route.auth-poll
+      x-sforum-contract-version: sforum.store.route.auth-poll@1
+      x-sforum-guard: core.guard.permission
+      x-sforum-permission: extension.plugin.manage
+      x-sforum-request-schema: sforum.store.auth-poll.request@1
+      x-sforum-response-schema: sforum.store.auth-poll.response@1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '../schemas/auth-poll.request.json'
+      responses:
+        "200":
+          description: 当前状态
+          content:
+            application/json:
+              schema:
+                $ref: '../schemas/auth-poll.response.json'
+        default:
+          description: |
+            错误文档（invalid_request / request_unknown / secret_write_failed / upstream_error）
+          content:
+            application/json:
+              schema:
+                $ref: '../schemas/auth-poll.response.json'
+  /api/store/auth/disconnect:
+    post:
+      operationId: sforum.store.api.authDisconnect
+      summary: 断开连接（尽力撤销上游令牌并清空宿主 secret）
+      description: |
+        上游撤销失败不会让断开失败：本地清掉才是断开的语义，`revoked` 只回报商城是否确认。
+      x-sforum-route-id: sforum.store.route.auth-disconnect
+      x-sforum-contract-version: sforum.store.route.auth-disconnect@1
+      x-sforum-guard: core.guard.permission
+      x-sforum-permission: extension.plugin.manage
+      x-sforum-request-schema: sforum.store.auth-disconnect.request@1
+      x-sforum-response-schema: sforum.store.auth-disconnect.response@1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '../schemas/auth-disconnect.request.json'
+      responses:
+        "200":
+          description: 已断开
+          content:
+            application/json:
+              schema:
+                $ref: '../schemas/auth-disconnect.response.json'
+        default:
+          description: 错误文档（not_configured / secret_write_failed）
+          content:
+            application/json:
+              schema:
+                $ref: '../schemas/auth-disconnect.response.json'

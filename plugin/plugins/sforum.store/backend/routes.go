@@ -18,12 +18,23 @@ const (
 	routeCatalogID    = "sforum.store.route.catalog"
 	routeProductID    = "sforum.store.route.product"
 	routeInstallURLID = "sforum.store.route.install-url"
+	// 连接商城的四条路由：状态、发起、轮询、断开。
+	routeAuthStatusID     = "sforum.store.route.auth-status"
+	routeAuthStartID      = "sforum.store.route.auth-start"
+	routeAuthPollID       = "sforum.store.route.auth-poll"
+	routeAuthDisconnectID = "sforum.store.route.auth-disconnect"
 
 	schemaCatalogResponse    = "sforum.store.catalog.response@1"
 	schemaProductResponse    = "sforum.store.product.response@1"
 	schemaInstallURLRequest  = "sforum.store.install-url.request@1"
 	schemaInstallURLResponse = "sforum.store.install-url.response@1"
 	schemaErrorResponse      = "sforum.store.error@1"
+
+	schemaAuthStatusResponse     = "sforum.store.auth-status.response@1"
+	schemaAuthStartResponse      = "sforum.store.auth-start.response@1"
+	schemaAuthPollRequest        = "sforum.store.auth-poll.request@1"
+	schemaAuthPollResponse       = "sforum.store.auth-poll.response@1"
+	schemaAuthDisconnectResponse = "sforum.store.auth-disconnect.response@1"
 )
 
 // storeServer 只承接路由分发；业务在 handlers.go，上游访问在 upstream.go，
@@ -35,10 +46,18 @@ type storeServer struct {
 	settingsCache  settingsCache
 	inventoryCache inventoryCache
 
+	// 连接商城的进程内状态：商城模式（60 秒缓存）与进行中的授权（verifier 只在这里）。
+	authModeCache authModeCache
+	pending       *pendingAuthStore
+
 	// settingsOverride 只给测试用：生产恒为 nil，设置一律来自 Host 的
 	// own-settings 查询（settings.go）。测试不启动 go-plugin 运行时，
 	// 因此没有已握手的 Host 可读。
 	settingsOverride *storeSettings
+
+	// secretOverride 只给测试用：生产恒为 nil，凭据一律写宿主的 SecretService
+	// （auth.go）。测试不启动 go-plugin 运行时，没有可用的 Host 通道。
+	secretOverride secretStore
 
 	// hostBuildOverride / inventoryFetch 也只给测试用：生产恒为 nil。
 	// 宿主版本来自 v2 握手快照（upstream.go），已装清单来自 Host Query
@@ -53,8 +72,9 @@ type storeServer struct {
 
 func newStoreServer() (*storeServer, error) {
 	server := &storeServer{
-		Server: pluginv2.NewServer(),
-		store:  newStoreClient(),
+		Server:  pluginv2.NewServer(),
+		store:   newStoreClient(),
+		pending: newPendingAuthStore(),
 	}
 	return server, nil
 }
@@ -69,6 +89,14 @@ func (s *storeServer) InvokeRoute(ctx context.Context, request *pluginwire.Route
 		return s.handleProduct(ctx, request)
 	case routeInstallURLID:
 		return s.handleInstallURL(ctx, request)
+	case routeAuthStatusID:
+		return s.handleAuthStatus(ctx, request)
+	case routeAuthStartID:
+		return s.handleAuthStart(ctx, request)
+	case routeAuthPollID:
+		return s.handleAuthPoll(ctx, request)
+	case routeAuthDisconnectID:
+		return s.handleAuthDisconnect(ctx, request)
 	default:
 		return errorResponse(request.GetContext(), schemaErrorResponse, 404, "route_not_found", "unknown sforum.store route")
 	}
@@ -112,6 +140,14 @@ func responseSchemaForRoute(routeID string) string {
 		return schemaProductResponse
 	case routeInstallURLID:
 		return schemaInstallURLResponse
+	case routeAuthStatusID:
+		return schemaAuthStatusResponse
+	case routeAuthStartID:
+		return schemaAuthStartResponse
+	case routeAuthPollID:
+		return schemaAuthPollResponse
+	case routeAuthDisconnectID:
+		return schemaAuthDisconnectResponse
 	default:
 		return schemaErrorResponse
 	}

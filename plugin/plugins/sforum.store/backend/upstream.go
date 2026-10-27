@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -36,6 +37,10 @@ const (
 	upstreamCatalogPath  = "/api/v1/catalog"
 	upstreamProductsPath = "/api/v1/products/"
 	upstreamDownloadURLs = "/api/v1/download-urls"
+
+	upstreamAuthModePath     = "/api/v1/auth/mode"
+	upstreamAuthRequestsPath = "/api/v1/auth/requests"
+	upstreamAuthRevokePath   = "/api/v1/auth/revoke"
 )
 
 // 上游失败分三类，处理方式不同：
@@ -47,6 +52,10 @@ var (
 	errUpstreamNotFound = errors.New("upstream resource not found")
 	errUpstreamRejected = errors.New("upstream rejected the request")
 	errUpstreamFailure  = errors.New("upstream request failed")
+	// errUpstreamUnauthorized 单独一类：商城要求（或不再认）账号令牌。
+	// 401 与其它 4xx 的处理完全不同——前者意味着「去连接」或「重新连接」，
+	// 不能像 asset_not_found 那样当成请求本身有问题。
+	errUpstreamUnauthorized = errors.New("upstream requires a store account")
 )
 
 // upstreamError 只携带短 reason，不带 URL、body 或 header：
@@ -159,6 +168,9 @@ type catalogQuery struct {
 	// 时才会发生。为 false 时不发 platform 参数——`platform=strict` 与省略等价，
 	// 多发一个参数只会让上游 ETag 抖动。
 	PlatformAll bool
+	// ExtensionIDs 是批量更新检查的目标集合：只问这些扩展，未知 ID 由商城忽略。
+	// 排序去重后写成一个逗号分隔参数；为空则根本不发。
+	ExtensionIDs []string
 }
 
 // hostBuild 是宿主在 protocol v2 握手时冻结的构建身份（SDK: Server.HostBuild）。
@@ -227,7 +239,27 @@ func (q catalogQuery) values() url.Values {
 	if q.PlatformAll {
 		values.Set("platform", platformModeAll)
 	}
+	if ids := normalizedExtensionIDs(q.ExtensionIDs); len(ids) > 0 {
+		values.Set("extensionIds", strings.Join(ids, ","))
+	}
 	return values
+}
+
+// normalizedExtensionIDs 让同一个集合只有一个查询串形态：顺序与重复都不会让
+// 上游缓存键抖动，也不会让同一批扩展算出两个 ETag。
+func normalizedExtensionIDs(ids []string) []string {
+	seen := make(map[string]bool, len(ids))
+	result := make([]string, 0, len(ids))
+	for _, raw := range ids {
+		id := strings.TrimSpace(raw)
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		result = append(result, id)
+	}
+	sort.Strings(result)
+	return result
 }
 
 // baseEndpoint 校验并拼接上游地址。base 来自 Host 设置，settings.go 已经要求
@@ -379,10 +411,13 @@ func fetchFresh[T any](
 
 // downloadURL 是 install-url 的上游调用，唯一一条不缓存的路径。
 // 返回体只保留 url/sha256/size/expiresAt 四个字段，且绝不写日志。
+// downloadURL 签发一条签名链接。bearer 非空时带 Authorization：
+// account_required 模式下商城要求账号令牌，anonymous 模式下带了也只是被校验+审计。
 func (c *storeClient) downloadURL(
 	ctx context.Context,
 	base string,
 	payload downloadURLRequest,
+	bearer string,
 ) (upstreamDownloadURL, error) {
 	endpoint, err := baseEndpoint(base, upstreamDownloadURLs, nil)
 	if err != nil {
@@ -398,6 +433,9 @@ func (c *storeClient) downloadURL(
 	}
 	request.Header.Set("Content-Type", upstreamJSONMedia)
 	request.Header.Set("Accept", upstreamJSONMedia)
+	if bearer != "" {
+		request.Header.Set("Authorization", "Bearer "+bearer)
+	}
 
 	response, err := c.http.Do(request)
 	if err != nil {
@@ -476,6 +514,8 @@ func discardBody(body io.Reader) {
 
 func statusFailure(status int) error {
 	switch {
+	case status == http.StatusUnauthorized:
+		return &upstreamError{category: errUpstreamUnauthorized, kind: "http", status: status}
 	case status == http.StatusNotFound:
 		return &upstreamError{category: errUpstreamNotFound, kind: "http", status: status}
 	case status >= 400 && status < 500:
@@ -493,4 +533,178 @@ func transportFailure(err error) error {
 		kind = "timeout"
 	}
 	return &upstreamError{category: errUpstreamFailure, kind: kind}
+}
+
+// ---------------------------------------------------------------------------
+// 商城 auth 端点（连接商城）
+// ---------------------------------------------------------------------------
+
+// 这些 DTO 只描述商城公开契约里出现的字段；多出来的字段一律忽略，
+// 少字段由 validate 拒绝。令牌只在内存里过一次，不落日志、不落缓存。
+
+type upstreamAuthMode struct {
+	Mode            string `json:"mode"`
+	TokenTTLSeconds int    `json:"token_ttl_seconds"`
+}
+
+type upstreamAuthRequestCreated struct {
+	ID           string `json:"id"`
+	AuthorizeURL string `json:"authorize_url"`
+	ExpiresIn    int    `json:"expires_in"`
+	Interval     int    `json:"interval"`
+}
+
+type upstreamAuthStatus struct {
+	Status string `json:"status"`
+}
+
+type upstreamAuthAccount struct {
+	ID          string `json:"id"`
+	IssuerKey   string `json:"issuerKey"`
+	Username    string `json:"username"`
+	DisplayName string `json:"displayName"`
+	AvatarURL   string `json:"avatarUrl"`
+}
+
+type upstreamAuthToken struct {
+	AccessToken string              `json:"access_token"`
+	TokenType   string              `json:"token_type"`
+	ExpiresIn   int                 `json:"expires_in"`
+	ExpiresAt   string              `json:"expires_at"`
+	Scope       string              `json:"scope"`
+	Account     upstreamAuthAccount `json:"account"`
+}
+
+// authJSON 是 auth 端点的唯一传输实现：JSON in / JSON out，错误按 statusFailure 分类，
+// 错误体不读、不回显（里面的 code 是商城的说法，插件自己有对外错误码）。
+func (c *storeClient) authJSON(
+	ctx context.Context,
+	method, base, path string,
+	payload any,
+	out any,
+	bearer string,
+) error {
+	endpoint, err := baseEndpoint(base, path, nil)
+	if err != nil {
+		return err
+	}
+	var body io.Reader
+	if payload != nil {
+		encoded, encodeErr := json.Marshal(payload)
+		if encodeErr != nil {
+			return &upstreamError{category: errUpstreamFailure, kind: "encode"}
+		}
+		body = bytes.NewReader(encoded)
+	}
+	request, err := http.NewRequestWithContext(ctx, method, endpoint, body)
+	if err != nil {
+		return &upstreamError{category: errUpstreamFailure, kind: "request"}
+	}
+	request.Header.Set("Accept", upstreamJSONMedia)
+	if payload != nil {
+		request.Header.Set("Content-Type", upstreamJSONMedia)
+	}
+	if bearer != "" {
+		request.Header.Set("Authorization", "Bearer "+bearer)
+	}
+
+	response, err := c.http.Do(request)
+	if err != nil {
+		return transportFailure(err)
+	}
+	defer response.Body.Close()
+
+	if status := response.StatusCode; status < 200 || status >= 300 {
+		discardBody(response.Body)
+		return statusFailure(status)
+	}
+	if out == nil {
+		discardBody(response.Body)
+		return nil
+	}
+	raw, err := readLimitedBody(response.Body)
+	if err != nil {
+		return err
+	}
+	if err := json.Unmarshal(raw, out); err != nil {
+		return &upstreamError{category: errUpstreamFailure, kind: "decode"}
+	}
+	return nil
+}
+
+func (c *storeClient) authMode(ctx context.Context, base string) (upstreamAuthMode, error) {
+	var mode upstreamAuthMode
+	if err := c.authJSON(ctx, http.MethodGet, base, upstreamAuthModePath, nil, &mode, ""); err != nil {
+		return upstreamAuthMode{}, err
+	}
+	if mode.Mode != authModeAnonymous && mode.Mode != authModeAccountRequired {
+		return upstreamAuthMode{}, &upstreamError{category: errUpstreamFailure, kind: "shape"}
+	}
+	return mode, nil
+}
+
+func (c *storeClient) createAuthRequest(
+	ctx context.Context,
+	base, codeChallenge, clientLabel string,
+) (upstreamAuthRequestCreated, error) {
+	payload := map[string]any{"code_challenge": codeChallenge}
+	if label := strings.TrimSpace(clientLabel); label != "" {
+		payload["client_label"] = label
+	}
+	var created upstreamAuthRequestCreated
+	if err := c.authJSON(ctx, http.MethodPost, base, upstreamAuthRequestsPath, payload, &created, ""); err != nil {
+		return upstreamAuthRequestCreated{}, err
+	}
+	if strings.TrimSpace(created.ID) == "" || strings.TrimSpace(created.AuthorizeURL) == "" {
+		return upstreamAuthRequestCreated{}, &upstreamError{category: errUpstreamFailure, kind: "shape"}
+	}
+	return created, nil
+}
+
+func (c *storeClient) authRequestStatus(ctx context.Context, base, requestID string) (string, error) {
+	path := upstreamAuthRequestsPath + "/" + url.PathEscape(requestID)
+	var status upstreamAuthStatus
+	if err := c.authJSON(ctx, http.MethodGet, base, path, nil, &status, ""); err != nil {
+		return "", err
+	}
+	switch status.Status {
+	case authStatusPending, authStatusApproved, authStatusDenied, authStatusConsumed, authStatusExpired:
+		return status.Status, nil
+	default:
+		return "", &upstreamError{category: errUpstreamFailure, kind: "shape"}
+	}
+}
+
+func (c *storeClient) exchangeAuthRequest(
+	ctx context.Context,
+	base, requestID, verifier string,
+) (upstreamAuthToken, error) {
+	path := upstreamAuthRequestsPath + "/" + url.PathEscape(requestID) + "/token"
+	var token upstreamAuthToken
+	if err := c.authJSON(ctx, http.MethodPost, base, path, map[string]any{"code_verifier": verifier}, &token, ""); err != nil {
+		return upstreamAuthToken{}, err
+	}
+	if err := token.validate(); err != nil {
+		return upstreamAuthToken{}, err
+	}
+	return token, nil
+}
+
+// revokeAuthToken 尽力而为：断开的语义是「本地不再持有凭据」，
+// 商城撤销失败不该把管理员卡在已连接状态里。
+func (c *storeClient) revokeAuthToken(ctx context.Context, base, token string) error {
+	return c.authJSON(ctx, http.MethodPost, base, upstreamAuthRevokePath, nil, nil, token)
+}
+
+func (t upstreamAuthToken) validate() error {
+	if !strings.HasPrefix(t.AccessToken, "sfo_") || len(t.AccessToken) != 47 {
+		return &upstreamError{category: errUpstreamFailure, kind: "shape"}
+	}
+	if _, err := time.Parse(time.RFC3339, t.ExpiresAt); err != nil {
+		return &upstreamError{category: errUpstreamFailure, kind: "shape"}
+	}
+	if strings.TrimSpace(t.Scope) == "" {
+		return &upstreamError{category: errUpstreamFailure, kind: "shape"}
+	}
+	return nil
 }
