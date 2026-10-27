@@ -118,13 +118,13 @@
       "path": "backend/plugin"
     },
     {
-      "digest": "ad9f5cbd262d7ce26e31f1550eaa9a32c74bc72fc0963fd5a2cd0c7dd3cb341e",
+      "digest": "ba95d809ce2571d2b37985e6c7475314f040f52b7976d8d96d25ba55d1e31b7a",
       "id": "sforum.store.file.admin",
       "kind": "frontend",
       "path": "frontend/admin/dist/catalog.mjs"
     },
     {
-      "digest": "68026203e7508ef263483d201c5757fd863e474f6226ab5236572976e7a8ddf4",
+      "digest": "c7062f340bd5610fa30426430e766ae9b94323961206e423c398faae0053085d",
       "id": "sforum.store.asset.admin-style",
       "kind": "asset",
       "path": "frontend/admin/dist/catalog.css"

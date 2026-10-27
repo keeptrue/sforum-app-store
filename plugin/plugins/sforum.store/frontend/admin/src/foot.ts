@@ -61,6 +61,10 @@ export type FootInput = {
   /** 状态位文案（安装中 / 已暂存 / 已签名 / 失败），空串 = 没有状态。 */
   stateText: string;
   tone: "" | "ok" | "bad";
+  /** 商城要求登录而当前没有凭据：主按钮禁用并改文案，点击前就说清楚。 */
+  authBlocked?: boolean;
+  /** 正在等商城授权：按钮保持禁用，避免重复开窗。 */
+  authWaiting?: boolean;
 };
 
 /**
@@ -87,22 +91,33 @@ export function footNodes(input: FootInput, copy: Copy): HTMLElement[] {
   const done = input.receiptLabel !== null;
   let stateText = input.stateText;
 
-  if (input.canInstall && input.gate.installable) {
+  if (input.canInstall && input.gate.installable && input.authBlocked) {
+    // 登录闸门排在安装门禁前面：门禁说的是「这一版能不能装」，闸门说的是「现在能不能签发」。
+    // 两者都挡住时先说签发 —— 连接之后门禁的结论才可执行。
+    const blocked = buttonEl(copy.t("loginRequiredAction"), "primary");
+    blocked.setAttribute("data-action", "install-auth-blocked");
+    blocked.disabled = true;
+    blocked.classList.add("sfstore__foot-action");
+    actionArea.append(blocked);
+    if (stateText === "") stateText = copy.t("loginRequiredHint");
+  } else if (input.canInstall && input.gate.installable) {
     const actionButton = buttonEl(
-      input.pending
-        ? copy.t(input.canEnable ? "installAndEnablePendingAction" : "installPendingAction")
-        : done
-          ? (input.receiptLabel as string)
-          : input.gate.upgrade
-            ? copy.t(
-                input.canEnable ? "installUpdateAndEnableAction" : "installUpdateAction",
-                { version: input.version },
-              )
-            : copy.t(input.canEnable ? "installAndEnableAction" : "installAction"),
+      input.authWaiting
+        ? copy.t("waitingAuthAction")
+        : input.pending
+          ? copy.t(input.canEnable ? "installAndEnablePendingAction" : "installPendingAction")
+          : done
+            ? (input.receiptLabel as string)
+            : input.gate.upgrade
+              ? copy.t(
+                  input.canEnable ? "installUpdateAndEnableAction" : "installUpdateAction",
+                  { version: input.version },
+                )
+              : copy.t(input.canEnable ? "installAndEnableAction" : "installAction"),
       "primary",
     );
     actionButton.setAttribute("data-action", "install");
-    actionButton.disabled = input.pending || done;
+    actionButton.disabled = input.pending || done || input.authWaiting === true;
     actionButton.classList.add("sfstore__foot-action");
     actionArea.append(actionButton);
   } else if (input.canInstall) {
@@ -126,19 +141,30 @@ export function footNodes(input: FootInput, copy: Copy): HTMLElement[] {
     // 跑不起来还签发下载链接，等于把坏包递出去。架构不支持时同样禁用，原因写在状态位。
     // 其余门禁原因（同版本 / 降级）不拦签名 —— 那条路径本来就是让操作者绕过页面门禁去 core 处理。
     const platformBlocked = !input.gate.installable && input.gate.reason === "platformUnsupported";
+    // 旧宿主只能拿签名链接，但签名同样要过登录闸门：没有令牌，商城会 401。
+    const authBlocked = input.authBlocked === true;
     const actionButton = buttonEl(
-      platformBlocked
-        ? copy.t("signAction")
-        : input.pending
-          ? copy.t("signPendingAction")
-          : copy.t("signAction"),
+      authBlocked
+        ? copy.t("loginRequiredAction")
+        : input.authWaiting
+          ? copy.t("waitingAuthAction")
+          : platformBlocked
+            ? copy.t("signAction")
+            : input.pending
+              ? copy.t("signPendingAction")
+              : copy.t("signAction"),
       "primary",
     );
-    actionButton.setAttribute("data-action", platformBlocked ? "sign-blocked" : "sign");
-    actionButton.disabled = platformBlocked || input.pending || done;
+    actionButton.setAttribute(
+      "data-action",
+      authBlocked ? "sign-auth-blocked" : platformBlocked ? "sign-blocked" : "sign",
+    );
+    actionButton.disabled =
+      platformBlocked || input.pending || done || authBlocked || input.authWaiting === true;
     actionButton.classList.add("sfstore__foot-action");
     actionArea.append(actionButton);
-    if (platformBlocked && stateText === "") stateText = input.gateText;
+    if (authBlocked && stateText === "") stateText = copy.t("loginRequiredHint");
+    else if (platformBlocked && stateText === "") stateText = input.gateText;
   }
 
   stateEl.textContent = stateText;

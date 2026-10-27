@@ -1,0 +1,443 @@
+// 「连接商城」的页面侧：状态机 + 连接条。
+//
+// 商城在 `download_auth_mode=account_required` 时要求账号令牌；令牌由**插件后端**持有
+// （写在宿主加密的 secret 设置里），页面只负责把操作者带到商城的授权页，然后轮询结果。
+// 页面从不接触令牌，也从不把它放进 URL 或 localStorage。
+//
+// 两条硬约束：
+// 1. `window.open` 必须在任何 await 之前同步调用 —— 否则弹窗拦截器会把这次打开当成
+//    非用户手势。所以先开一个 about:blank，拿到 authorizeUrl 之后再导航它。
+// 2. 轮询有截止时间：授权请求本身只有 5 分钟，页面不能无限转圈。
+
+import { buttonEl, el } from "./dom";
+import type { Copy } from "./copy";
+import { formatDateTime } from "./logic";
+
+export const AUTH_STATUS_PATH = "/api/store/auth/status";
+export const AUTH_START_PATH = "/api/store/auth/start";
+export const AUTH_POLL_PATH = "/api/store/auth/poll";
+export const AUTH_DISCONNECT_PATH = "/api/store/auth/disconnect";
+
+/** 商城模式。`unsupported` 是插件的说法：旧商城没有 /api/v1/auth/mode。 */
+export type AuthMode = "anonymous" | "account_required" | "unsupported";
+
+export type AuthPhase =
+  | "loading"
+  | "idle"
+  | "connecting"
+  | "waiting"
+  | "connected"
+  | "error";
+
+export type AuthAccount = {
+  id: string;
+  issuerKey: string;
+  username: string;
+  displayName: string;
+  avatarUrl: string;
+};
+
+export type AuthSnapshot = {
+  phase: AuthPhase;
+  mode: AuthMode;
+  connected: boolean;
+  account: AuthAccount | null;
+  expiresAt: string | null;
+  /** 等待授权时显示的短码，和商城授权页上的那一串对照。 */
+  code: string;
+  message: string;
+};
+
+/** 新标签句柄：只用到 location.href 与 close（可选）。 */
+export type AuthTab = { location: { href: string }; close?: () => void } | null;
+
+export type AuthDeps = {
+  request: <T = unknown>(path: string, options?: Record<string, unknown>) => Promise<T>;
+  copy: Copy;
+  /** 同步开窗；默认 `window.open("about:blank", "_blank")` 并置 opener=null。 */
+  openWindow?: () => AuthTab;
+  setTimer?: (run: () => void, ms: number) => unknown;
+  clearTimer?: (handle: unknown) => void;
+  now?: () => number;
+  /** 每次状态变化后调用：页面据此重绘安装条。 */
+  onChange?: (snapshot: AuthSnapshot) => void;
+};
+
+const DEFAULT_INTERVAL_SECONDS = 2;
+const MIN_INTERVAL_SECONDS = 1;
+const DEFAULT_EXPIRES_IN_SECONDS = 300;
+
+function emptySnapshot(): AuthSnapshot {
+  return {
+    phase: "loading",
+    mode: "anonymous",
+    connected: false,
+    account: null,
+    expiresAt: null,
+    code: "",
+    message: "",
+  };
+}
+
+function defaultOpenWindow(): AuthTab {
+  const scope = globalThis as any;
+  const win = scope?.window ?? scope;
+  if (typeof win?.open !== "function") return null;
+  const tab = win.open("about:blank", "_blank");
+  if (tab) {
+    // 授权页不该能通过 window.opener 反向操作这个管理页。
+    try {
+      tab.opener = null;
+    } catch {
+      // 某些浏览器下 opener 只读；忽略即可，导航仍然有效。
+    }
+  }
+  return tab;
+}
+
+function readString(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+function readAccount(value: unknown): AuthAccount | null {
+  if (!value || typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+  const id = readString(record.id);
+  if (!id) return null;
+  return {
+    id,
+    issuerKey: readString(record.issuerKey),
+    username: readString(record.username),
+    displayName: readString(record.displayName),
+    avatarUrl: readString(record.avatarUrl),
+  };
+}
+
+function readMode(value: unknown): AuthMode {
+  return value === "account_required" || value === "unsupported" ? value : "anonymous";
+}
+
+/** 商城/插件给的错误码 → 页面文案。未知码按通用失败处理。 */
+export function authErrorMessage(
+  code: string,
+  copy: Copy,
+  detail?: string,
+): string {
+  switch (code) {
+    case "not_configured":
+      return copy.t("authNotConfigured");
+    case "auth_unsupported":
+      return copy.t("authUnsupported");
+    case "auth_not_required":
+      return copy.t("authNotRequired");
+    case "request_unknown":
+      return copy.t("authRequestUnknown");
+    case "secret_write_failed":
+      return copy.t("authSecretWriteFailed");
+    case "login_required":
+      return copy.t("authLoginRequired");
+    default:
+      return detail ? copy.t("authFailedWith", { detail }) : copy.t("authFailed");
+  }
+}
+
+function errorCodeOf(error: unknown): string {
+  const candidate = error as { data?: { code?: unknown }; status?: unknown } | null;
+  const code = candidate?.data?.code;
+  return typeof code === "string" ? code : "";
+}
+
+export type AuthController = {
+  /** 连接条节点：由控制器自己重绘，页面只负责插进壳里。 */
+  element: HTMLElement;
+  snapshot: () => AuthSnapshot;
+  /** 商城要求登录且当前没有可用凭据：安装必须被挡住。 */
+  isBlocking: () => boolean;
+  load: () => Promise<void>;
+  connect: () => Promise<void>;
+  disconnect: () => Promise<void>;
+  destroy: () => void;
+};
+
+export function createAuthController(deps: AuthDeps): AuthController {
+  const copy = deps.copy;
+  const openWindow = deps.openWindow ?? defaultOpenWindow;
+  const setTimer =
+    deps.setTimer ?? ((run: () => void, ms: number) => setTimeout(run, ms) as unknown);
+  const clearTimer =
+    deps.clearTimer ?? ((handle: unknown) => clearTimeout(handle as ReturnType<typeof setTimeout>));
+  const now = deps.now ?? (() => Date.now());
+
+  let state = emptySnapshot();
+  let pollHandle: unknown = null;
+  let deadline = 0;
+  let requestId = "";
+  let disposed = false;
+
+  const element = el("section", "sfstore__auth");
+  element.setAttribute("data-role", "auth");
+  element.hidden = true;
+
+  function emit() {
+    render();
+    deps.onChange?.(state);
+  }
+
+  function patch(next: Partial<AuthSnapshot>) {
+    state = { ...state, ...next };
+    emit();
+  }
+
+  function stopPolling() {
+    if (pollHandle !== null) {
+      clearTimer(pollHandle);
+      pollHandle = null;
+    }
+  }
+
+  function render() {
+    element.replaceChildren();
+    element.hidden = shouldHide();
+    if (element.hidden) return;
+    element.setAttribute("data-phase", state.phase);
+    element.setAttribute("data-mode", state.mode);
+
+    const text = el("p", "sfstore__auth-text");
+    text.setAttribute("data-role", "auth-text");
+    text.textContent = messageFor();
+    element.append(text);
+
+    const actions = el("div", "sfstore__auth-actions");
+    for (const action of actionsFor()) {
+      actions.append(action);
+    }
+    if (actions.childNodes.length) element.append(actions);
+  }
+
+  /** 旧商城、匿名模式、还没加载完：都不显示连接条（避免首屏闪一条用不上的提示）。 */
+  function shouldHide(): boolean {
+    if (state.mode === "unsupported" || state.mode === "anonymous") return true;
+    if (state.phase === "loading") return true;
+    return false;
+  }
+
+  function messageFor(): string {
+    if (state.phase === "connected") {
+      const who = state.account?.username || state.account?.displayName || "";
+      // 到期时间按页面统一的本地时间格式显示，不把 ISO 串直接摆给操作者。
+      const formatted = state.expiresAt ? formatDateTime(state.expiresAt) : "";
+      const expiry = formatted ? copy.t("authExpiresAt", { time: formatted }) : "";
+      return copy.t("authConnectedAs", { who, expiry });
+    }
+    if (state.phase === "waiting") {
+      return copy.t("authWaiting", { code: state.code });
+    }
+    if (state.phase === "connecting") return copy.t("authConnecting");
+    if (state.phase === "error") return state.message || copy.t("authFailed");
+    return copy.t("authRequired");
+  }
+
+  function actionsFor(): HTMLButtonElement[] {
+    if (state.phase === "connected") {
+      const button = buttonEl(copy.t("authDisconnectAction"));
+      button.setAttribute("data-action", "auth-disconnect");
+      button.addEventListener("click", () => void disconnect());
+      return [button];
+    }
+    if (state.phase === "waiting" || state.phase === "connecting") {
+      const button = buttonEl(copy.t("authCancelAction"));
+      button.setAttribute("data-action", "auth-cancel");
+      button.addEventListener("click", () => cancel());
+      return [button];
+    }
+    const button = buttonEl(copy.t("authConnectAction"), "primary");
+    button.setAttribute("data-action", "auth-connect");
+    button.addEventListener("click", () => void connect());
+    return [button];
+  }
+
+  function cancel() {
+    stopPolling();
+    requestId = "";
+    patch({ phase: "idle", message: "", code: "" });
+  }
+
+  async function load(): Promise<void> {
+    try {
+      const payload = await deps.request<Record<string, unknown>>(AUTH_STATUS_PATH);
+      if (disposed) return;
+      const mode = readMode(payload?.mode);
+      const connected = payload?.connected === true;
+      patch({
+        mode,
+        connected,
+        account: readAccount(payload?.account),
+        expiresAt: readString(payload?.expiresAt) || null,
+        phase: connected ? "connected" : "idle",
+        message: "",
+      });
+    } catch (error) {
+      if (disposed) return;
+      // 读不到状态不该让页面变砖：按「不知道」处理，安装照旧走（商城会用 401 说话）。
+      const code = errorCodeOf(error);
+      patch({
+        phase: "error",
+        mode: "anonymous",
+        message: authErrorMessage(code, copy),
+      });
+    }
+  }
+
+  async function connect(): Promise<void> {
+    if (state.phase === "connecting" || state.phase === "waiting") return;
+    // 先同步开窗：await 之后再 open 会被弹窗拦截。
+    const tab = openWindow();
+    patch({ phase: "connecting", message: "", code: "" });
+
+    let start: Record<string, unknown>;
+    try {
+      start = await deps.request<Record<string, unknown>>(AUTH_START_PATH, {
+        method: "POST",
+        body: {},
+      });
+    } catch (error) {
+      closeTab(tab);
+      patch({ phase: "error", message: authErrorMessage(errorCodeOf(error), copy) });
+      return;
+    }
+    if (disposed) {
+      closeTab(tab);
+      return;
+    }
+
+    requestId = readString(start?.requestId);
+    const authorizeUrl = readString(start?.authorizeUrl);
+    if (!requestId || !authorizeUrl) {
+      closeTab(tab);
+      patch({ phase: "error", message: copy.t("authFailed") });
+      return;
+    }
+
+    const expiresIn = numberOr(start?.expiresIn, DEFAULT_EXPIRES_IN_SECONDS);
+    const interval = Math.max(MIN_INTERVAL_SECONDS, numberOr(start?.interval, DEFAULT_INTERVAL_SECONDS));
+    deadline = now() + Math.max(1, expiresIn) * 1000;
+
+    if (tab) {
+      try {
+        tab.location.href = authorizeUrl;
+      } catch {
+        // 句柄不可导航（已关闭）：退化成让操作者自己打开。
+      }
+    } else {
+      // 没有句柄说明弹窗被拦了：把地址写进连接条，操作者可以手动打开。
+      patch({ phase: "error", message: copy.t("authPopupBlocked") });
+      return;
+    }
+
+    patch({ phase: "waiting", code: shortCode(requestId) });
+    schedulePoll(interval);
+  }
+
+  function schedulePoll(intervalSeconds: number) {
+    stopPolling();
+    pollHandle = setTimer(() => {
+      pollHandle = null;
+      void poll();
+    }, intervalSeconds * 1000);
+  }
+
+  async function poll(): Promise<void> {
+    if (disposed || state.phase !== "waiting") return;
+    if (now() > deadline) {
+      stopPolling();
+      patch({ phase: "error", message: copy.t("authExpired") });
+      return;
+    }
+    let payload: Record<string, unknown>;
+    try {
+      payload = await deps.request<Record<string, unknown>>(AUTH_POLL_PATH, {
+        method: "POST",
+        body: { requestId },
+      });
+    } catch (error) {
+      if (disposed) return;
+      stopPolling();
+      patch({ phase: "error", message: authErrorMessage(errorCodeOf(error), copy) });
+      return;
+    }
+    if (disposed) return;
+
+    const status = readString(payload?.status);
+    if (status === "pending") {
+      schedulePoll(MIN_INTERVAL_SECONDS);
+      return;
+    }
+    stopPolling();
+    requestId = "";
+    if (status === "connected") {
+      patch({
+        phase: "connected",
+        connected: true,
+        account: readAccount(payload?.account),
+        expiresAt: readString(payload?.expiresAt) || null,
+        code: "",
+        message: "",
+      });
+      return;
+    }
+    if (status === "denied") {
+      patch({ phase: "error", message: copy.t("authDenied") });
+      return;
+    }
+    if (status === "consumed") {
+      patch({ phase: "error", message: copy.t("authConsumed") });
+      return;
+    }
+    patch({ phase: "error", message: copy.t("authExpired") });
+  }
+
+  async function disconnect(): Promise<void> {
+    try {
+      await deps.request(AUTH_DISCONNECT_PATH, { method: "POST", body: {} });
+      if (disposed) return;
+      patch({ phase: "idle", connected: false, account: null, expiresAt: null, message: "", code: "" });
+    } catch (error) {
+      if (disposed) return;
+      patch({ phase: "error", message: authErrorMessage(errorCodeOf(error), copy) });
+    }
+  }
+
+  function destroy() {
+    disposed = true;
+    stopPolling();
+  }
+
+  render();
+  return {
+    element,
+    snapshot: () => state,
+    isBlocking: () => state.mode === "account_required" && !state.connected,
+    load,
+    connect,
+    disconnect,
+    destroy,
+  };
+}
+
+function closeTab(tab: AuthTab) {
+  if (!tab || typeof tab.close !== "function") return;
+  try {
+    tab.close();
+  } catch {
+    // 关不掉就算了：about:blank 标签页对操作者没有危害。
+  }
+}
+
+function numberOr(value: unknown, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+/** 短码只取前 8 位大写：和商城授权页上显示的是同一串。 */
+export function shortCode(requestId: string): string {
+  return requestId.replace(/-/g, "").slice(0, 8).toUpperCase();
+}

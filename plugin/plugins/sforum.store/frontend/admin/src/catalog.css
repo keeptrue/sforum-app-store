@@ -884,6 +884,58 @@
   overflow-wrap: anywhere;
 }
 
+/* 连接商城：目录顶部一条，只在「商城要求登录且尚未连接」时出现。
+   颜色只表达状态（已连接=ok、等待=中性、失败=danger），不靠图标。 */
+
+.sfstore__auth {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  margin: 0 2px 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--sfstore-border);
+  border-left: 3px solid var(--sfstore-accent-ink);
+  border-radius: 6px;
+  background: var(--sfstore-accent-soft);
+  color: var(--sfstore-text);
+  font-size: 12.5px;
+}
+
+.sfstore__auth[data-phase="connected"] {
+  border-left-color: var(--sfstore-ok);
+  background: var(--sfstore-ok-soft);
+}
+
+.sfstore__auth[data-phase="error"] {
+  border-left-color: var(--sfstore-danger);
+  background: var(--sfstore-danger-soft);
+}
+
+.sfstore__auth-text {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.sfstore__auth-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+@media (max-width: 560px) {
+  .sfstore__auth {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .sfstore__auth-actions {
+    width: 100%;
+  }
+}
+
 .sfstore__notice {
   margin: 0;
   padding: 6px 8px;

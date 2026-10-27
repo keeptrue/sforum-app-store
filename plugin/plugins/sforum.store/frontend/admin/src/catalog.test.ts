@@ -44,6 +44,14 @@ import type {
   HostInstallResult,
 } from "./types";
 
+/** `/api/store/auth/start` 的默认响应：授权页与商城同源（页面只做展示，不校验）。 */
+const AUTH_START = {
+  requestId: "11111111-1111-4111-8111-111111111111",
+  authorizeUrl: "https://store.example.test/connect/11111111-1111-4111-8111-111111111111",
+  expiresIn: 300,
+  interval: 2,
+};
+
 const CATALOG = {
   items: [
     {
@@ -273,6 +281,10 @@ type FakeBridge = PageBridge & {
 function fakeBridge(options: {
   configured?: boolean;
   install?: boolean;
+  /** 连接商城的响应；默认匿名模式（不显示连接条）。 */
+  authStatus?: unknown;
+  authStart?: unknown;
+  authPoll?: unknown;
   installImpl?: (request: HostInstallRequest) => Promise<HostInstallResult>;
   /** 新宿主：同时提供 installAndEnableExtension（`outcome` 由用例决定）。 */
   enable?: boolean;
@@ -303,6 +315,20 @@ function fakeBridge(options: {
       if (path.startsWith("/api/store/catalog")) return options.catalog ?? CATALOG;
       if (path.startsWith("/api/store/product")) return options.product ?? PRODUCT;
       if (path === "/api/store/install-url") return SIGNED;
+      // 连接商城的四条路由：默认匿名模式（页面隐藏连接条，安装照旧）。
+      if (path === "/api/store/auth/status") {
+        return (
+          options.authStatus ?? {
+            mode: "anonymous",
+            connected: false,
+            account: null,
+            expiresAt: null,
+          }
+        );
+      }
+      if (path === "/api/store/auth/start") return options.authStart ?? AUTH_START;
+      if (path === "/api/store/auth/poll") return options.authPoll ?? { status: "pending" };
+      if (path === "/api/store/auth/disconnect") return { connected: false, revoked: true };
       throw new Error(`unexpected ${path}`);
     },
     toast: (input) => toasts.push(input),
@@ -1100,7 +1126,8 @@ describe("mount", () => {
     const html = toHTML(target);
     expect(html).toContain("还没配置商城地址");
     expect(html).toContain("到 应用商城 设置里填写商城地址");
-    expect(bridge.requests.length).toBe(1);
+    // 两次探测各一次：目录 + 连接状态。没有重试循环，也没有第三个请求。
+    expect(bridge.requests.length).toBe(2);
   });
 
   test("cleanup removes the nodes it added and stops listening", async () => {
@@ -2832,5 +2859,92 @@ describe("platform availability", () => {
     const footState = context.document.body.querySelector('[data-role="foot-state"]') as any;
     expect(footState.textContent).toBe("Supported on this platform (linux/amd64)");
     expect(footState.textContent).not.toMatch(CJK);
+  });
+});
+
+describe("connecting the store", () => {
+  const REQUIRED = {
+    mode: "account_required",
+    connected: false,
+    account: null,
+    expiresAt: null,
+  };
+  const CONNECTED = {
+    mode: "account_required",
+    connected: true,
+    account: { id: "acc-1", issuerKey: "forum", username: "ada", displayName: "Ada", avatarUrl: "" },
+    expiresAt: "2026-11-26T00:00:00Z",
+  };
+
+  test("a store that requires sign-in shows the connect bar", async () => {
+    const bridge = fakeBridge({ authStatus: REQUIRED });
+    const { target } = render(bridge);
+    await flush();
+    const bar = target.querySelector('[data-role="auth"]') as any;
+    expect(bar.hidden).toBe(false);
+    expect(bar.textContent).toContain("商城要求登录");
+    expect(bar.querySelector('[data-action="auth-connect"]')).toBeTruthy();
+  });
+
+  test("an anonymous store hides the bar entirely", async () => {
+    const bridge = fakeBridge();
+    const { target } = render(bridge);
+    await flush();
+    expect((target.querySelector('[data-role="auth"]') as any).hidden).toBe(true);
+  });
+
+  test("an old store is unsupported and never shows the bar", async () => {
+    const bridge = fakeBridge({
+      authStatus: { mode: "unsupported", connected: false, account: null, expiresAt: null },
+    });
+    const { target } = render(bridge);
+    await flush();
+    expect((target.querySelector('[data-role="auth"]') as any).hidden).toBe(true);
+    expect(target.querySelector('[data-action="auth-connect"]')).toBeNull();
+  });
+
+  test("the install button says「登录后安装」and is disabled while blocked", async () => {
+    const bridge = fakeBridge({ authStatus: REQUIRED });
+    const context = await openFirstCard(bridge);
+    const blocked = context.document.body.querySelector('[data-action="install-auth-blocked"]') as any;
+    expect(blocked).toBeTruthy();
+    expect(blocked.textContent).toBe("登录后安装");
+    expect(blocked.disabled).toBe(true);
+    const state = context.document.body.querySelector('[data-role="foot-state"]') as any;
+    expect(state.textContent).toContain("先在目录顶部点「连接商城」");
+  });
+
+  test("a connected store installs with the normal button", async () => {
+    const bridge = fakeBridge({ authStatus: CONNECTED });
+    const context = await openFirstCard(bridge);
+    const bar = context.target.querySelector('[data-role="auth"]') as any;
+    expect(bar.textContent).toContain("@ada");
+    const button = context.document.body.querySelector('[data-action="install"]') as any;
+    expect(button).toBeTruthy();
+    expect(button.disabled).toBe(false);
+  });
+
+  test("disconnecting flips the open dialog back to the blocked button", async () => {
+    const bridge = fakeBridge({ authStatus: CONNECTED });
+    const context = await openFirstCard(bridge);
+    expect((context.document.body.querySelector('[data-action="install"]') as any).disabled).toBe(false);
+
+    // 连接条上的「断开连接」：状态机回到 idle，安装条必须立刻跟着变（onChange 联动）。
+    click(context.target, '[data-action="auth-disconnect"]');
+    await flush();
+
+    const blocked = context.document.body.querySelector('[data-action="install-auth-blocked"]') as any;
+    expect(blocked).toBeTruthy();
+    expect(blocked.disabled).toBe(true);
+  });
+
+  test("en-US says the same thing in English", async () => {
+    const bridge = fakeBridge({ authStatus: REQUIRED, locale: "en-US" });
+    const context = await openFirstCard(bridge);
+    const bar = context.target.querySelector('[data-role="auth"]') as any;
+    expect(bar.textContent).toContain("Connect store");
+    const blocked = context.document.body.querySelector('[data-action="install-auth-blocked"]') as any;
+    expect(blocked.textContent).toBe("Sign in to install");
+    expect(bar.textContent).not.toMatch(/[\u4e00-\u9fff]/);
   });
 });

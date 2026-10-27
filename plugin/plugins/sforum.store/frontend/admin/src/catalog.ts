@@ -11,6 +11,7 @@
 // - 手写 ESM 拿不到 Host 图标运行时：所有按钮用文字，不用 emoji、不手绘内联 SVG。
 // - 页面标题与简介由宿主页面壳渲染；本页只负责目录、弹窗与安装条。
 
+import { createAuthController } from "./auth";
 import { createCopy } from "./copy";
 import { createDialog } from "./dialog";
 import { readProductQuery } from "./deep-link";
@@ -182,6 +183,12 @@ export function mount(target: HTMLElement, bridge: PageBridge): () => void {
   // falls back to zh-CN and never throws.
   const copy = createCopy(bridge?.locale);
   const state = initialState();
+  // 连接商城：状态机与连接条都在 auth.ts，这里只把它插进壳里，并在它变化时重绘安装条。
+  const auth = createAuthController({
+    request: (path, options) => bridge.request(path, options),
+    copy,
+    onChange: () => refreshInstallArea(),
+  });
   const disposers: Array<() => void> = [];
   let disposed = false;
   let catalogGeneration = 0;
@@ -271,7 +278,7 @@ export function mount(target: HTMLElement, bridge: PageBridge): () => void {
   const results = el("div", "sfstore__results");
   results.append(liveEl, grid, moreWrap);
 
-  root.append(head, results);
+  root.append(head, auth.element, results);
   target.append(root);
 
   const dialog = createDialog({
@@ -942,6 +949,8 @@ export function mount(target: HTMLElement, bridge: PageBridge): () => void {
           receiptLabel: receiptLabel(),
           stateText: installStateText(gate, release),
           tone: installStateTone(gate, release),
+          authBlocked: auth.isBlocking(),
+          authWaiting: auth.snapshot().phase === "waiting",
         },
         copy,
       ),
@@ -1033,6 +1042,7 @@ export function mount(target: HTMLElement, bridge: PageBridge): () => void {
 
   renderAll();
   void loadCatalog();
+  void auth.load();
   // 深链：`?product=<slug>` 首次挂载就打开详情，和目录请求并行、互不等待。
   // 目录落地后 state.target 会补齐，renderAll() 会让详情按真实架构重绘。
   const deepLinkSlug = readProductQuery(globalThis.location?.search ?? "");
@@ -1045,6 +1055,7 @@ export function mount(target: HTMLElement, bridge: PageBridge): () => void {
     if (debounceTimer) clearTimeout(debounceTimer);
     debounceTimer = null;
     for (const dispose of disposers.splice(0)) dispose();
+    auth.destroy();
     dialog.destroy();
     root.remove();
   };
