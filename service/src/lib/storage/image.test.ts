@@ -123,6 +123,25 @@ describe("validateImage", () => {
     });
   });
 
+  test("returns instead of spinning on a malformed ASF header (GHSA-5v7r-6r5c-r473)", async () => {
+    // 10-byte ASF signature + 30-byte prelude + one header object whose 64-bit size
+    // field is zero, so its payload is -24. file-type < 21.3.1 handed that negative
+    // payload to `tokenizer.ignore`, which moved the read position backwards and
+    // re-read the same header forever (CVE-2026-31808, 55-byte DoS).
+    const malformedAsf = Buffer.concat([
+      Buffer.from([0x30, 0x26, 0xb2, 0x75, 0x8e, 0x66, 0xcf, 0x11, 0xa6, 0xd9]),
+      Buffer.alloc(30, 0),
+      Buffer.alloc(16, 0), // header GUID: not Stream-Properties-Object
+      Buffer.alloc(8, 0), // UINT64_LE size = 0
+      Buffer.alloc(1, 0), // keep the scan loop's `position + 24 < size` true
+    ]);
+
+    await expect(validateImage(malformedAsf)).resolves.toEqual({
+      ok: false,
+      code: "unsupported_image",
+    });
+  });
+
   test("enforces MAX_IMAGE_EDGE per edge and rejects zero dimensions", async () => {
     const exact = pngWithSize(MAX_IMAGE_EDGE, MAX_IMAGE_EDGE);
     await expect(validateImage(exact)).resolves.toEqual({

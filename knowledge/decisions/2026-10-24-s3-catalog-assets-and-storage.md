@@ -30,6 +30,10 @@ v1 尚未拥有的能力：**semver 约束求值**、**图片格式/尺寸判定
   唯一格式判据（不看扩展名、不看 `Content-Type`），`image-size` 只取宽高。
 - `file-type@19` 是纯 ESM，Bun 与 Next 的 node runtime 都直接吃；实测 `fileTypeFromBuffer`
   与 `imageSize` 在本仓 Bun 下可用（2026-10-24）。
+- **2026-10-27 升到 `^21.3.1`**：`<21.3.1` 的 ASF 解析器在畸形输入（子头 `size=0`）上死循环
+  （GHSA-5v7r-6r5c-r473 / CVE-2026-31808）。同一 API（`fileTypeFromBuffer`），`engines.node`
+  从 `>=18` 提到 `>=20`；不选 22.x 是因为它要求 Node 22，而本仓的 Node 只是 `next start`
+  的回退路径，Bun 1.4.2 才是运行时。回归用例见 `src/lib/storage/image.test.ts`。
 - **不引入 `sharp`**：v1 不做缩放/转码/裁切，只做「是否为安全位图」的准入。`sharp` 会带来
   原生依赖与构建矩阵风险，收益是 S3 不需要的能力。
 

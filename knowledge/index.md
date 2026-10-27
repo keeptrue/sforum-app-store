@@ -24,6 +24,14 @@ HTTPS）；② 完整真实 provider 登录（缺 client secret 与论坛用户�
 
 ## Latest Handoff
 
+`sessions/2026-10-27-dependabot-file-type-asf.md` —— **Dependabot #1：`file-type` ASF 死循环
+（插件 0.1.5）**：`service/package.json` 的 `file-type` `^19` → `^21.3.1`（解析到 21.3.4），
+关掉 GHSA-5v7r-6r5c-r473 / CVE-2026-31808（子头 `size=0` 时 `ignore(-24)` 回退读位置，
+55 字节卡死事件循环）。唯一调用点是产品图片准入 `validateImage`；新增 65 字节畸形 ASF
+回归用例（在 19.6.0 下 `timeout 5` 挂死，21.3.4 下 `unsupported_image`）。清单版本
+`0.1.4 → 0.1.5`，`build.sh` digests 0 updated。证据：885 pass / 74 files、typecheck 0、
+`bun --bun next build` 0。决策补在 `decisions/2026-10-24-s3-catalog-assets-and-storage.md`。
+
 `sessions/2026-10-27-default-catalog-base-url.md` —— **默认商城地址改为 `https://app-store.dalao.me`
 （插件 0.1.4）**：清单 `default` 从空串改成该地址；后端 `resolveCatalogBaseURL` 只把默认值用在
 「own-settings 没有这个键」的场景，显式清空仍按未配置处理（不发请求）。Go 8 例 + 前端 216 pass，
