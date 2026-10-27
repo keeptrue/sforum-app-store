@@ -199,6 +199,10 @@ jobs:
           set -euo pipefail
           VERSION="${TAG#v}"
           MINOR="${VERSION%.*}"
+          PRERELEASE_FLAG=()
+          if [[ "$VERSION" == *-* ]]; then
+            PRERELEASE_FLAG=(--prerelease)
+          fi
           {
             echo '## 安装'
             echo
@@ -221,9 +225,9 @@ jobs:
             fi
           } > notes.md
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release edit "$TAG" --title "$TAG" --notes-file notes.md
+            gh release edit "$TAG" --title "$TAG" --notes-file notes.md "${PRERELEASE_FLAG[@]}"
             gh release upload "$TAG" dist/* --clobber
           else
-            gh release create "$TAG" --title "$TAG" --notes-file notes.md dist/*
+            gh release create "$TAG" --title "$TAG" --notes-file notes.md "${PRERELEASE_FLAG[@]}" dist/*
           fi
           gh release view "$TAG" --json assets --jq '.assets[].name'
