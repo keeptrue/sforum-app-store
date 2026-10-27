@@ -183,6 +183,53 @@ describe("connect flow", () => {
     expect(h.scheduled()).toBe(1);
   });
 
+  test("a transient poll failure keeps waiting instead of ending the flow", async () => {
+    // 传输抖动 / 宿主重启 / 429 都只说明「这一拍没答案」，商城那边的请求还活着。
+    let attempt = 0;
+    const h = harness((call) => {
+      if (call.path === AUTH_STATUS_PATH) {
+        return { mode: "account_required", connected: false, account: null, expiresAt: null };
+      }
+      if (call.path === AUTH_START_PATH) {
+        return { requestId: "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa", authorizeUrl: "https://s/x", expiresIn: 300, interval: 2 };
+      }
+      attempt += 1;
+      if (attempt === 1) return httpError("upstream_error", 502);
+      if (attempt === 2) return httpError("slow_down", 429);
+      return {
+        status: "connected",
+        account: { id: "acc-1", issuerKey: "forum", username: "ada", displayName: "Ada", avatarUrl: "" },
+        expiresAt: "2026-11-26T00:00:00Z",
+      };
+    });
+    await h.controller.load();
+    await h.controller.connect();
+
+    await h.advance(2_000);
+    expect(h.controller.snapshot().phase).toBe("waiting");
+    await h.advance(2_000);
+    expect(h.controller.snapshot().phase).toBe("waiting");
+    await h.advance(2_000);
+    expect(h.controller.snapshot().phase).toBe("connected");
+  });
+
+  test("a definitive failure still stops the poll", async () => {
+    const h = harness((call) => {
+      if (call.path === AUTH_STATUS_PATH) {
+        return { mode: "account_required", connected: false, account: null, expiresAt: null };
+      }
+      if (call.path === AUTH_START_PATH) {
+        return { requestId: "bbbbbbbb-1111-4111-8111-bbbbbbbbbbbb", authorizeUrl: "https://s/x", expiresIn: 300, interval: 2 };
+      }
+      return httpError("request_unknown", 404);
+    });
+    await h.controller.load();
+    await h.controller.connect();
+    await h.advance(2_000);
+    expect(h.controller.snapshot().phase).toBe("error");
+    expect(h.scheduled()).toBe(0);
+  });
+
   test("polls at the advertised interval until the store says connected", async () => {
     let polls = 0;
     const h = harness((call) => {

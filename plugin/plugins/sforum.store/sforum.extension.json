@@ -118,7 +118,7 @@
       "path": "backend/plugin"
     },
     {
-      "digest": "56962a832919fff19afc53c52d43ee2a3b47b13dbba7ec9f7e465914e88140fa",
+      "digest": "e8aef610871b6de990471cd4e46602e8cc2da63cd6363629a6eaea95b485a7c7",
       "id": "sforum.store.file.admin",
       "kind": "frontend",
       "path": "frontend/admin/dist/catalog.mjs"

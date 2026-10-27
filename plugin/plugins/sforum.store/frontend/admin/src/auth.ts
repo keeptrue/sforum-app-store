@@ -76,7 +76,9 @@ export type AuthDeps = {
 };
 
 const DEFAULT_INTERVAL_SECONDS = 2;
-const MIN_INTERVAL_SECONDS = 1;
+// 商城的 `install-auth-poll` 有 2 秒下限（1 次/2 秒），按 1 秒轮询会稳定吃 429，
+// 而 429 又会被插件包成 502 —— 于是「轮询」变成「连接失败」。下限与商城对齐。
+const MIN_INTERVAL_SECONDS = 2;
 const DEFAULT_EXPIRES_IN_SECONDS = 300;
 
 function emptySnapshot(): AuthSnapshot {
@@ -173,6 +175,21 @@ function failureOf(error: unknown): { code: string; status: number; detail: stri
   };
 }
 
+/**
+ * 这次轮询失败值不值得再试。
+ *
+ * 值得：传输错误（没有状态码）、429、5xx、以及插件自己的 `upstream_error`
+ * ——它们都表示「这一拍没拿到答案」，商城那边的授权请求还活着。
+ * 不值得：`request_unknown`（插件重启过，verifier 没了）、`secret_write_failed`、
+ * 以及任何 4xx —— 重试不会变。
+ */
+export function isTransientPollFailure(code: string, status: number): boolean {
+  // 确定性失败优先：`secret_write_failed` 也是 5xx，但重试一万次也写不进去。
+  if (code === "request_unknown" || code === "secret_write_failed") return false;
+  if (status === 0 || status === 429 || status >= 500) return true;
+  return code === "upstream_error" || code === "slow_down";
+}
+
 function authMessageFor(error: unknown, copy: Copy): string {
   const { code, status, detail } = failureOf(error);
   return authErrorMessage(code, copy, detail, status);
@@ -203,6 +220,8 @@ export function createAuthController(deps: AuthDeps): AuthController {
   let pollHandle: unknown = null;
   let deadline = 0;
   let requestId = "";
+  /** 商城在 /auth/start 里给的轮询间隔；后续每一轮都用它，不再回落到下限。 */
+  let pollIntervalSeconds = DEFAULT_INTERVAL_SECONDS;
   let disposed = false;
 
   const element = el("section", "sfstore__auth");
@@ -352,7 +371,10 @@ export function createAuthController(deps: AuthDeps): AuthController {
     }
 
     const expiresIn = numberOr(start?.expiresIn, DEFAULT_EXPIRES_IN_SECONDS);
-    const interval = Math.max(MIN_INTERVAL_SECONDS, numberOr(start?.interval, DEFAULT_INTERVAL_SECONDS));
+    pollIntervalSeconds = Math.max(
+      MIN_INTERVAL_SECONDS,
+      numberOr(start?.interval, DEFAULT_INTERVAL_SECONDS),
+    );
     deadline = now() + Math.max(1, expiresIn) * 1000;
 
     if (tab) {
@@ -368,15 +390,18 @@ export function createAuthController(deps: AuthDeps): AuthController {
     }
 
     patch({ phase: "waiting", code: shortCode(requestId) });
-    schedulePoll(interval);
+    schedulePoll();
   }
 
-  function schedulePoll(intervalSeconds: number) {
+  function schedulePoll() {
     stopPolling();
-    pollHandle = setTimer(() => {
-      pollHandle = null;
-      void poll();
-    }, intervalSeconds * 1000);
+    pollHandle = setTimer(
+      () => {
+        pollHandle = null;
+        void poll();
+      },
+      Math.max(MIN_INTERVAL_SECONDS, pollIntervalSeconds) * 1000,
+    );
   }
 
   async function poll(): Promise<void> {
@@ -394,6 +419,14 @@ export function createAuthController(deps: AuthDeps): AuthController {
       });
     } catch (error) {
       if (disposed) return;
+      // 传输抖动、宿主/插件重启、429 都不该把「等待授权」变成「连接失败」：
+      // 商城的请求还在，继续轮询到截止时间才是对的。真正确定性的失败
+      // （请求已失效、secret 写不进去）才终止。
+      const { code, status } = failureOf(error);
+      if (isTransientPollFailure(code, status) && now() <= deadline) {
+        schedulePoll();
+        return;
+      }
       stopPolling();
       patch({ phase: "error", message: authMessageFor(error, copy) });
       return;
@@ -402,7 +435,7 @@ export function createAuthController(deps: AuthDeps): AuthController {
 
     const status = readString(payload?.status);
     if (status === "pending") {
-      schedulePoll(MIN_INTERVAL_SECONDS);
+      schedulePoll();
       return;
     }
     stopPolling();
