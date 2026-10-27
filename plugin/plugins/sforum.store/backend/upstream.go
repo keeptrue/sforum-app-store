@@ -25,9 +25,18 @@ const (
 	upstreamJSONMedia    = "application/json"
 
 	// 缓存只有目录与详情两条读路径；TTL 与 stale 窗口见 §6.4。
-	cacheFreshTTL   = 10 * time.Minute
+	//
+	// freshTTL 与商城自己的 `Cache-Control: max-age=60` 对齐：非显式复核的请求
+	// （搜索、筛选、翻页）最多旧 60 秒，而「打开页面 / 点刷新」走 refresh=1 直接
+	// 条件复核，不受这个窗口影响。窗口一旦比商城大，就会出现「刚发布的扩展要等
+	// 十分钟才看得见」——页面首屏恰好命中的就是这个键。
+	cacheFreshTTL   = 60 * time.Second
 	cacheStaleTTL   = 24 * time.Hour
 	cacheMaxEntries = 256
+
+	// forcedRefreshTimeout 只约束「已有缓存 + 显式复核」这一次上游调用：商城不可用
+	// 时页面最多等这么久就回落缓存，而不是把首屏拖到客户端的 10 秒超时。
+	forcedRefreshTimeout = 5 * time.Second
 
 	catalogDefaultLimit = 18
 	catalogMaxLimit     = 100
@@ -97,11 +106,12 @@ func upstreamFailureReason(err error) string {
 // storeClient 负责访问商城 HTTP API，并按「完整上游路径 + 查询」缓存 ETag 读结果。
 // 只缓存成功的目录/详情读取；install-url 永远不缓存，签名链接不落任何内存。
 type storeClient struct {
-	http       *http.Client
-	freshTTL   time.Duration
-	staleTTL   time.Duration
-	maxEntries int
-	now        func() time.Time
+	http          *http.Client
+	freshTTL      time.Duration
+	staleTTL      time.Duration
+	forcedTimeout time.Duration
+	maxEntries    int
+	now           func() time.Time
 
 	mu      sync.Mutex
 	entries map[string]*cacheEntry
@@ -128,12 +138,13 @@ type productResult struct {
 
 func newStoreClient() *storeClient {
 	return &storeClient{
-		http:       newStoreHTTPClient(),
-		freshTTL:   cacheFreshTTL,
-		staleTTL:   cacheStaleTTL,
-		maxEntries: cacheMaxEntries,
-		now:        time.Now,
-		entries:    make(map[string]*cacheEntry),
+		http:          newStoreHTTPClient(),
+		freshTTL:      cacheFreshTTL,
+		staleTTL:      cacheStaleTTL,
+		forcedTimeout: forcedRefreshTimeout,
+		maxEntries:    cacheMaxEntries,
+		now:           time.Now,
+		entries:       make(map[string]*cacheEntry),
 	}
 }
 
@@ -281,12 +292,14 @@ func baseEndpoint(base, path string, query url.Values) (string, error) {
 	return endpoint, nil
 }
 
-func (c *storeClient) catalog(ctx context.Context, base string, query catalogQuery) (catalogResult, error) {
+// catalog 读目录。force=true 表示调用方显式要求「现在」的目录（页面首屏、刷新、
+// 重试）：跳过新鲜窗口，但仍走条件请求与 stale 兜底。
+func (c *storeClient) catalog(ctx context.Context, base string, query catalogQuery, force bool) (catalogResult, error) {
 	endpoint, err := baseEndpoint(base, upstreamCatalogPath, query.values())
 	if err != nil {
 		return catalogResult{}, err
 	}
-	page, fetchedAt, stale, err := cachedJSON[upstreamCatalog](c, ctx, endpoint)
+	page, fetchedAt, stale, err := cachedJSON[upstreamCatalog](c, ctx, endpoint, force)
 	if err != nil {
 		return catalogResult{}, err
 	}
@@ -297,15 +310,16 @@ func (c *storeClient) catalog(ctx context.Context, base string, query catalogQue
 }
 
 // product 读产品详情。sforum/sforumBuild 与目录查询同源：宿主给了就带上，让上游
-// 按同一份版本面求值每个 release 的约束。
-func (c *storeClient) product(ctx context.Context, base, slug string, build hostBuild) (productResult, error) {
+// 按同一份版本面求值每个 release 的约束。force 的语义与 catalog 相同：打开详情
+// 必须是「现在」的版本列表，否则刚发布的版本要等新鲜窗口过去才能装。
+func (c *storeClient) product(ctx context.Context, base, slug string, build hostBuild, force bool) (productResult, error) {
 	query := url.Values{}
 	setHostVersion(query, build)
 	endpoint, err := baseEndpoint(base, upstreamProductsPath+url.PathEscape(slug), query)
 	if err != nil {
 		return productResult{}, err
 	}
-	product, fetchedAt, stale, err := cachedJSON[upstreamProduct](c, ctx, endpoint)
+	product, fetchedAt, stale, err := cachedJSON[upstreamProduct](c, ctx, endpoint, force)
 	if err != nil {
 		return productResult{}, err
 	}
@@ -317,10 +331,11 @@ func (c *storeClient) product(ctx context.Context, base, slug string, build host
 
 // cachedJSON 按完整上游路径缓存解码后的文档：
 //   - freshTTL 内直接服务内存值；
-//   - 过期后带 If-None-Match 复验，304 只刷新 fetchedAt；
+//   - force=true 跳过这一步：调用方要的是「现在」的目录，缓存只参与条件请求与兜底；
+//   - 过期（或强制）后带 If-None-Match 复验，304 只刷新 fetchedAt；
 //   - 上游故障（传输/超时/5xx/解码）用 staleTTL 内的旧值兜底（stale=true），
 //     超出 stale 窗口才把错误抛给 handler。
-func cachedJSON[T any](c *storeClient, ctx context.Context, endpoint string) (*T, time.Time, bool, error) {
+func cachedJSON[T any](c *storeClient, ctx context.Context, endpoint string, force bool) (*T, time.Time, bool, error) {
 	now := c.now()
 
 	c.mu.Lock()
@@ -333,7 +348,9 @@ func cachedJSON[T any](c *storeClient, ctx context.Context, endpoint string) (*T
 			cached = payload
 		}
 	}
-	if cached != nil && now.Sub(entry.fetchedAt) < c.freshTTL {
+	// 显式复核不认新鲜窗口。缓存条目仍在：条件请求拿 304 时不重传正文，
+	// 商城不可用时也还能回落（见下面的 stale 分支）。
+	if cached != nil && !force && now.Sub(entry.fetchedAt) < c.freshTTL {
 		return cached, entry.fetchedAt, false, nil
 	}
 
@@ -342,7 +359,16 @@ func cachedJSON[T any](c *storeClient, ctx context.Context, endpoint string) (*T
 		ifNoneMatch = entry.etag
 	}
 
-	value, etag, notModified, err := fetchFresh[T](c, ctx, endpoint, ifNoneMatch)
+	// 有缓存可回落时，显式复核的等待上限是 forcedTimeout：否则商城失联会把每次
+	// 打开页面都拖成客户端的 10 秒超时。冷启动没有兜底，仍用完整预算。
+	callCtx := ctx
+	if force && cached != nil && c.forcedTimeout > 0 {
+		var cancel context.CancelFunc
+		callCtx, cancel = context.WithTimeout(ctx, c.forcedTimeout)
+		defer cancel()
+	}
+
+	value, etag, notModified, err := fetchFresh[T](c, callCtx, endpoint, ifNoneMatch, force)
 	if err == nil && notModified {
 		if cached != nil {
 			fetchedAt := c.now()
@@ -371,6 +397,7 @@ func fetchFresh[T any](
 	ctx context.Context,
 	endpoint string,
 	ifNoneMatch string,
+	force bool,
 ) (*T, string, bool, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
@@ -379,6 +406,11 @@ func fetchFresh[T any](
 	request.Header.Set("Accept", upstreamJSONMedia)
 	if ifNoneMatch != "" {
 		request.Header.Set("If-None-Match", ifNoneMatch)
+	}
+	// 显式复核要穿透中间层缓存：商城的公共读响应带 max-age=60，不加这条请求
+	// 指令时 CDN/反代会把「复核」变成它自己的一次本地命中。
+	if force {
+		request.Header.Set("Cache-Control", "no-cache")
 	}
 
 	response, err := c.http.Do(request)

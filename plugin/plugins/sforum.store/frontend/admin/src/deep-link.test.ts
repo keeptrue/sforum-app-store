@@ -184,7 +184,7 @@ describe("product deep link on mount", () => {
     const context = await mountWithSearch("?product=markdown");
     try {
       expect(context.bridge.requests.map((entry) => entry.path)).toContain(
-        "/api/store/product?slug=markdown",
+        "/api/store/product?slug=markdown&refresh=1",
       );
       const html = toHTML(context.document.body);
       expect(html).toContain("Markdown 增强");

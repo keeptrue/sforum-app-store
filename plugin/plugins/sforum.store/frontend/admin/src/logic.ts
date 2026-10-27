@@ -96,6 +96,14 @@ export type CatalogQueryInput = {
   category: string;
   cursor: string | null;
   compatMode: CompatMode;
+  /**
+   * 跳过插件后端的新鲜窗口，要求这次一定向商城复核。
+   *
+   * 打开页面、点刷新、失败重试都要它：默认窗口（60 秒）会让「刚发布的扩展」
+   * 在首屏看不见，而刷新按钮若只重复同一个查询就永远返回同一份快照。
+   * 它只是插件路由的指令，不会被转发到商城。
+   */
+  refresh?: boolean;
 };
 
 /** `GET /api/store/catalog` with the parameter order the plugin backend proxies. */
@@ -112,12 +120,16 @@ export function buildCatalogPath(input: CatalogQueryInput): string {
   if (query) params.set("q", query);
   if (input.category) params.set("category", input.category);
   if (input.cursor) params.set("cursor", input.cursor);
+  // 放最后：普通请求与强制复核共用同一个上游缓存键，只有新鲜度要求不同。
+  if (input.refresh) params.set("refresh", "1");
   const search = params.toString();
   return search ? `${CATALOG_PATH}?${search}` : CATALOG_PATH;
 }
 
-export function buildProductPath(slug: string): string {
-  return `${PRODUCT_PATH}?slug=${encodeURIComponent(slug)}`;
+/** `GET /api/store/product`；`refresh` 的语义与目录查询相同（详情要立刻反映新版本）。 */
+export function buildProductPath(slug: string, refresh = false): string {
+  const suffix = refresh ? "&refresh=1" : "";
+  return `${PRODUCT_PATH}?slug=${encodeURIComponent(slug)}${suffix}`;
 }
 
 /** Body of `POST /api/store/install-url`, matching schemas/install-url.request.json. */

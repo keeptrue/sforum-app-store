@@ -24,6 +24,15 @@ HTTPS）；② 完整真实 provider 登录（缺 client secret 与论坛用户�
 
 ## Latest Handoff
 
+`sessions/2026-10-28-catalog-cache-revalidation.md` —— **商城页「新插件不出现」（插件 0.1.6）**：
+根因是插件后端 `cachedJSON` 的 10 分钟新鲜窗口——首屏（`compat` 省略）命中常热键，窗口内
+直接返回内存快照、不发请求；勾选兼容开关换了查询键才被迫取数，刷新按钮同键所以没反应。
+修法：插件路由加 `refresh=1`（不转发上游、不进缓存键），首屏/刷新/重试/详情强制条件复核，
+搜索筛选仍走窗口；`cacheFreshTTL` 10 分钟 → 60 秒；强制复核带 `Cache-Control: no-cache`，
+已有缓存时上游上限 5 秒、失败回落 stale。证据：Go 新 4 例、前端 219 pass、`build.sh` 0.1.6，
+活体 `fetchedAt` 17:39:43 → 17:40:22（`refresh=1`）。决策
+`decisions/2026-10-28-catalog-cache-revalidation.md`。
+
 `sessions/2026-10-27-dependabot-file-type-asf.md` —— **Dependabot #1：`file-type` ASF 死循环
 （插件 0.1.5）**：`service/package.json` 的 `file-type` `^19` → `^21.3.1`（解析到 21.3.4），
 关掉 GHSA-5v7r-6r5c-r473 / CVE-2026-31808（子头 `size=0` 时 `ignore(-24)` 回退读位置，

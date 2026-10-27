@@ -443,6 +443,23 @@ describe("request building", () => {
     ).toBe("/api/store/catalog?compat=all&platform=all&q=mark+down&category=content&cursor=c1");
   });
 
+  test("refresh asks the plugin backend to revalidate the same query", () => {
+    const base = {
+      query: "",
+      channel: "stable" as const,
+      category: "",
+      cursor: null,
+      compatMode: "auto" as const,
+    };
+    // 只多一个参数，上游缓存键不变：缓存仍参与条件请求与失败兜底。
+    expect(buildCatalogPath({ ...base, refresh: true })).toBe(
+      "/api/store/catalog?channel=stable&platform=all&refresh=1",
+    );
+    expect(buildCatalogPath(base)).toBe("/api/store/catalog?channel=stable&platform=all");
+    expect(buildProductPath("demo", true)).toBe("/api/store/product?slug=demo&refresh=1");
+    expect(buildProductPath("demo")).toBe("/api/store/product?slug=demo");
+  });
+
   test("product path encodes the slug", () => {
     expect(buildProductPath("demo/odd slug")).toBe("/api/store/product?slug=demo%2Fodd%20slug");
   });
@@ -816,7 +833,10 @@ describe("mount", () => {
     const { target } = render(bridge);
     await flush();
 
-    expect(bridge.requests[0]).toEqual({ path: "/api/store/catalog?channel=stable&platform=all", options: undefined });
+    expect(bridge.requests[0]).toEqual({
+      path: "/api/store/catalog?channel=stable&platform=all&refresh=1",
+      options: undefined,
+    });
     expect(target.querySelector('[data-role="count"]')!.textContent).toBe("共 2 个结果");
     expect(target.querySelectorAll(".sfstore__card").length).toBe(2);
     expect(target.querySelector('[data-role="stale"]')!.textContent).toContain("数据更新于");
@@ -864,6 +884,37 @@ describe("mount", () => {
     // 折起来的事实仍可悬停读到：约束与判决都在 title 里。
     expect(folded.title).toContain("sforum >=1.0.0 <2.0.0");
     expect(folded.title).toContain("兼容");
+  });
+
+  test("the first paint revalidates; a filter change stays on the cache", async () => {
+    const bridge = fakeBridge();
+    const { target } = render(bridge);
+    await flush();
+
+    // 首屏必须向商城复核：新鲜窗口内的快照会让刚发布的扩展「打开页面看不见」。
+    expect(bridge.requests[0]!.path).toBe(
+      "/api/store/catalog?channel=stable&platform=all&refresh=1",
+    );
+
+    const select = target.querySelector('[data-role="channel"]') as any;
+    select.value = "all";
+    select.dispatchEvent({ type: "change" });
+    await flush();
+    // 筛选与搜索不强制复核：60 秒窗口留给它们，输入抖动不该打商城。
+    expect(bridge.requests.at(-1)!.path).toBe("/api/store/catalog?platform=all");
+  });
+
+  test("the refresh button revalidates instead of replaying the cached page", async () => {
+    const bridge = fakeBridge();
+    const { target } = render(bridge);
+    await flush();
+
+    click(target, '[data-role="refresh"]');
+    await flush();
+    // 同一个查询键，只多了 refresh=1：插件后端据此跳过新鲜窗口。
+    expect(bridge.requests.at(-1)!.path).toBe(
+      "/api/store/catalog?channel=stable&platform=all&refresh=1",
+    );
   });
 
   test("switching the channel to 含预发布 drops the channel param", async () => {
@@ -931,7 +982,7 @@ describe("mount", () => {
   test("card click loads the product into the dialog: README, versions, constraint, digest, selectors", async () => {
     const bridge = fakeBridge();
     const context = await openFirstCard(bridge);
-    expect(bridge.requests.at(-1)!.path).toBe("/api/store/product?slug=markdown");
+    expect(bridge.requests.at(-1)!.path).toBe("/api/store/product?slug=markdown&refresh=1");
 
     // 详情只住在 body 层的弹窗里，页面根不再重复一份。
     expect(context.target.querySelector(".sforum-store-readme")).toBeNull();
@@ -1707,7 +1758,7 @@ describe("compatibility switch", () => {
     expect(field.hidden).toBe(false);
     expect(target.querySelector(".sfstore__toggle-text")!.textContent).toBe("只看当前版本可安装");
     // auto：首屏不发送 compat，由商城按宿主决定；发行版宿主默认就是「只看可安装」。
-    expect(bridge.requests[0]!.path).toBe("/api/store/catalog?channel=stable&platform=all");
+    expect(bridge.requests[0]!.path).toBe("/api/store/catalog?channel=stable&platform=all&refresh=1");
     // 口径说明只陈述「筛过」，不替 core 下「可安装」的结论。
     expect(target.querySelector('[data-role="compat-note"]')!.textContent).toContain(
       "已按宿主版本与各版本的 sforumVersion 约束筛选",
@@ -2656,7 +2707,7 @@ describe("platform availability", () => {
     await flush();
 
     // 架构不再由人挑：目录恒要全部平台，产品不因为异架构从列表里消失。
-    expect(bridge.requests[0]!.path).toBe("/api/store/catalog?channel=stable&platform=all");
+    expect(bridge.requests[0]!.path).toBe("/api/store/catalog?channel=stable&platform=all&refresh=1");
     expect(target.querySelector('[data-role="platform-toggle"]')).toBeNull();
   });
 

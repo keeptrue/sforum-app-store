@@ -63,8 +63,12 @@ func (s *storeServer) handleCatalog(ctx context.Context, request *pluginwire.Rou
 	if err != nil {
 		return errorResponse(request.GetContext(), schemaCatalogResponse, http.StatusBadRequest, codeInvalidRequest, err.Error())
 	}
+	force, err := forcedRefresh(request.GetQueryParameters()["refresh"])
+	if err != nil {
+		return errorResponse(request.GetContext(), schemaCatalogResponse, http.StatusBadRequest, codeInvalidRequest, err.Error())
+	}
 
-	result, err := s.store.catalog(ctx, settings.CatalogBaseURL, query)
+	result, err := s.store.catalog(ctx, settings.CatalogBaseURL, query, force)
 	if err != nil {
 		return failureResponse(request.GetContext(), routeCatalogID, catalogFailure(err), err)
 	}
@@ -89,8 +93,12 @@ func (s *storeServer) handleProduct(ctx context.Context, request *pluginwire.Rou
 	if !slugPattern.MatchString(slug) {
 		return errorResponse(request.GetContext(), schemaProductResponse, http.StatusBadRequest, codeInvalidRequest, "slug 缺失或不是合法的产品标识。")
 	}
+	force, err := forcedRefresh(request.GetQueryParameters()["refresh"])
+	if err != nil {
+		return errorResponse(request.GetContext(), schemaProductResponse, http.StatusBadRequest, codeInvalidRequest, err.Error())
+	}
 
-	result, err := s.store.product(ctx, settings.CatalogBaseURL, slug, s.hostBuildSnapshot())
+	result, err := s.store.product(ctx, settings.CatalogBaseURL, slug, s.hostBuildSnapshot(), force)
 	if err != nil {
 		return failureResponse(request.GetContext(), routeProductID, productFailure(err), err)
 	}
@@ -252,6 +260,26 @@ func catalogQueryFromRequest(request *pluginwire.RouteRequest, settings storeSet
 	}
 	query.Limit = limit
 	return query, nil
+}
+
+// refresh 是插件自己的缓存指令，不是商城的参数：`1` 表示「这次必须向商城复核」。
+// 它不进入 catalogQuery，因此既不会被转发到上游，也不会让缓存键抖动 —— 同一个
+// 查询在「打开页面」与「翻页」之间共用一份缓存，只有新鲜度要求不同。
+//
+// 为什么需要它：缓存的新鲜窗口（60 秒）意味着页面首屏可能拿到上一份快照，
+// 刚发布的扩展要等窗口过去才看得见；而「刷新」按钮若只是重复同一个查询，按了
+// 也不会有任何变化。显式复核让这两个动作都有确定语义。
+const refreshForced = "1"
+
+func forcedRefresh(raw string) (bool, error) {
+	switch value := strings.TrimSpace(raw); value {
+	case "":
+		return false, nil
+	case refreshForced:
+		return true, nil
+	default:
+		return false, errors.New("refresh 只能是 1 或省略。")
+	}
 }
 
 // compat 参数与 compatibility.status 共享 compatible 这个字面值，但语义不同：

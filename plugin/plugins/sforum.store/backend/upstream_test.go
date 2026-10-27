@@ -90,21 +90,21 @@ func TestCatalogCacheServesFreshHitAndRevalidatesWithETag(t *testing.T) {
 	first := assertJSONDocument(t, invokeRoute(t, server, routeCatalogID, params, nil), schemaCatalogResponse)
 	assertFetchedAt(t, first, baseTestTime())
 
-	// TTL 内：内存直出，上游没有新请求。
-	clock.advance(5 * time.Minute)
+	// 新鲜窗口内（60 秒）：内存直出，上游没有新请求。
+	clock.advance(30 * time.Second)
 	assertStatus(t, invokeRoute(t, server, routeCatalogID, params, nil), http.StatusOK)
 	if hits := fake.hits(); hits != 1 {
 		t.Fatalf("fresh cache hit should not call upstream, hits = %d", hits)
 	}
 
-	// 超过 TTL：带 If-None-Match 复验，304 复用缓存 body 并刷新 fetchedAt。
-	clock.advance(6 * time.Minute)
+	// 超过窗口：带 If-None-Match 复验，304 复用缓存 body 并刷新 fetchedAt。
+	clock.advance(40 * time.Second)
 	second := invokeRoute(t, server, routeCatalogID, params, nil)
 	secondValues := assertJSONDocument(t, second, schemaCatalogResponse)
 	if got := secondValues["stale"]; got != false {
 		t.Fatalf("304 revalidation stale = %v, want false", got)
 	}
-	assertFetchedAt(t, secondValues, baseTestTime().Add(11*time.Minute))
+	assertFetchedAt(t, secondValues, baseTestTime().Add(70*time.Second))
 	if !reflect.DeepEqual(first["items"], secondValues["items"]) {
 		t.Fatalf("304 must reuse the cached body:\nfirst=%v\nsecond=%v", first["items"], secondValues["items"])
 	}
@@ -112,11 +112,143 @@ func TestCatalogCacheServesFreshHitAndRevalidatesWithETag(t *testing.T) {
 		t.Fatalf("upstream hits = %d, want 2", hits)
 	}
 
-	// 复验成功也算一次成功读取：新的 TTL 从这里开始。
-	clock.advance(5 * time.Minute)
+	// 复验成功也算一次成功读取：新的窗口从这里开始。
+	clock.advance(30 * time.Second)
 	assertStatus(t, invokeRoute(t, server, routeCatalogID, params, nil), http.StatusOK)
 	if hits := fake.hits(); hits != 2 {
 		t.Fatalf("refreshed cache should serve memory, hits = %d", hits)
+	}
+}
+
+// 显式复核（refresh=1）必须跳过新鲜窗口：这正是「刚发布的扩展首屏看不见」的修法。
+// 缓存条目仍然参与条件请求 —— 304 不重传正文，只把 fetchedAt 推到现在。
+func TestCatalogForcedRefreshSkipsFreshCache(t *testing.T) {
+	clock := newTestClock(baseTestTime())
+	fake := newFakeUpstream(t, func(w http.ResponseWriter, r *http.Request, call int) {
+		if call == 1 {
+			writeUpstreamJSON(t, w, http.StatusOK, catalogFixture(), map[string]string{"ETag": `"v1"`})
+			return
+		}
+		if got := r.Header.Get("If-None-Match"); got != `"v1"` {
+			t.Errorf("If-None-Match = %q, want %q", got, `"v1"`)
+		}
+		if got := r.Header.Get("Cache-Control"); got != "no-cache" {
+			t.Errorf("forced revalidation Cache-Control = %q, want no-cache", got)
+		}
+		w.WriteHeader(http.StatusNotModified)
+	})
+	server := newBoundStoreServer(t, fake, storeSettings{Channel: channelStable})
+	server.store.now = clock.now
+
+	params := map[string]string{"channel": channelStable}
+	first := assertJSONDocument(t, invokeRoute(t, server, routeCatalogID, params, nil), schemaCatalogResponse)
+
+	// 5 秒后仍在窗口内：普通请求是内存直出，不打扰商城。
+	clock.advance(5 * time.Second)
+	assertStatus(t, invokeRoute(t, server, routeCatalogID, params, nil), http.StatusOK)
+	if hits := fake.hits(); hits != 1 {
+		t.Fatalf("plain request inside the window must stay cached, hits = %d", hits)
+	}
+
+	forced := assertJSONDocument(t, invokeRoute(t, server, routeCatalogID, map[string]string{
+		"channel": channelStable,
+		"refresh": refreshForced,
+	}, nil), schemaCatalogResponse)
+	if hits := fake.hits(); hits != 2 {
+		t.Fatalf("forced refresh must revalidate upstream, hits = %d", hits)
+	}
+	if got := forced["stale"]; got != false {
+		t.Fatalf("304 forced refresh stale = %v, want false", got)
+	}
+	assertFetchedAt(t, forced, baseTestTime().Add(5*time.Second))
+	if !reflect.DeepEqual(first["items"], forced["items"]) {
+		t.Fatalf("304 must reuse the cached body")
+	}
+
+	// refresh 是插件自己的缓存指令：绝不能出现在上游查询串里，否则缓存键会抖动。
+	if query := fake.last(t).Query; query.Has("refresh") {
+		t.Fatalf("refresh must not be forwarded upstream: %v", query)
+	}
+}
+
+// 强制复核失败时必须回落缓存，而不是把首屏变成错误页：管理员宁可看到带时间戳的
+// 旧目录，也不该因为商城抖一下就整页报错。
+func TestCatalogForcedRefreshServesStaleWhenUpstreamFails(t *testing.T) {
+	clock := newTestClock(baseTestTime())
+	fake := newFakeUpstream(t, func(w http.ResponseWriter, r *http.Request, call int) {
+		if call == 1 {
+			writeUpstreamJSON(t, w, http.StatusOK, catalogFixture(), map[string]string{"ETag": `"v1"`})
+			return
+		}
+		writeUpstreamJSON(t, w, http.StatusInternalServerError, map[string]any{"code": "boom"}, nil)
+	})
+	server := newBoundStoreServer(t, fake, storeSettings{Channel: channelStable})
+	server.store.now = clock.now
+
+	params := map[string]string{"channel": channelStable}
+	first := assertJSONDocument(t, invokeRoute(t, server, routeCatalogID, params, nil), schemaCatalogResponse)
+
+	clock.advance(5 * time.Second)
+	response := invokeRoute(t, server, routeCatalogID, map[string]string{
+		"channel": channelStable,
+		"refresh": refreshForced,
+	}, nil)
+	assertStatus(t, response, http.StatusOK)
+	stale := assertJSONDocument(t, response, schemaCatalogResponse)
+	if got := stale["stale"]; got != true {
+		t.Fatalf("forced refresh after upstream failure stale = %v, want true", got)
+	}
+	// stale 响应的 fetchedAt 是原始抓取时间，页面据此显示「数据更新于 X」。
+	assertFetchedAt(t, stale, baseTestTime())
+	if !reflect.DeepEqual(first["items"], stale["items"]) {
+		t.Fatalf("stale body differs from cached body")
+	}
+}
+
+func TestCatalogRejectsUnknownRefreshValue(t *testing.T) {
+	fake := newFakeUpstream(t, nil)
+	server := newBoundStoreServer(t, fake, storeSettings{Channel: channelStable})
+
+	response := invokeRoute(t, server, routeCatalogID, map[string]string{
+		"channel": channelStable,
+		"refresh": "yes",
+	}, nil)
+	assertError(t, response, http.StatusBadRequest, codeInvalidRequest)
+	if hits := fake.hits(); hits != 0 {
+		t.Fatalf("invalid refresh must not reach upstream, hits = %d", hits)
+	}
+}
+
+// 详情走同一套语义：刚发布的版本必须立刻出现在版本列表里，否则装不上。
+func TestProductForcedRefreshSkipsFreshCache(t *testing.T) {
+	clock := newTestClock(baseTestTime())
+	fake := newFakeUpstream(t, func(w http.ResponseWriter, r *http.Request, call int) {
+		if call == 1 {
+			writeUpstreamJSON(t, w, http.StatusOK, productFixture(), map[string]string{"ETag": `"p1"`})
+			return
+		}
+		if got := r.Header.Get("If-None-Match"); got != `"p1"` {
+			t.Errorf("If-None-Match = %q, want %q", got, `"p1"`)
+		}
+		w.WriteHeader(http.StatusNotModified)
+	})
+	server := newBoundStoreServer(t, fake, storeSettings{Channel: channelStable})
+	server.store.now = clock.now
+
+	params := map[string]string{"slug": "demo-plugin"}
+	first := assertJSONDocument(t, invokeRoute(t, server, routeProductID, params, nil), schemaProductResponse)
+
+	clock.advance(5 * time.Second)
+	forced := assertJSONDocument(t, invokeRoute(t, server, routeProductID, map[string]string{
+		"slug":    "demo-plugin",
+		"refresh": refreshForced,
+	}, nil), schemaProductResponse)
+	if hits := fake.hits(); hits != 2 {
+		t.Fatalf("forced product refresh must revalidate upstream, hits = %d", hits)
+	}
+	assertFetchedAt(t, forced, baseTestTime().Add(5*time.Second))
+	if !reflect.DeepEqual(first["product"], forced["product"]) {
+		t.Fatalf("304 must reuse the cached product")
 	}
 }
 

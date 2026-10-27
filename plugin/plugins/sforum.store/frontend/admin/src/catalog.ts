@@ -365,7 +365,7 @@ export function mount(target: HTMLElement, bridge: PageBridge): () => void {
     return merged;
   }
 
-  async function loadCatalog(options: { append?: boolean } = {}) {
+  async function loadCatalog(options: { append?: boolean; refresh?: boolean } = {}) {
     const append = options.append === true;
     if (append && (!state.nextCursor || state.appending || state.loading)) return;
     const generation = catalogGeneration += 1;
@@ -388,6 +388,8 @@ export function mount(target: HTMLElement, bridge: PageBridge): () => void {
           category: state.category,
           cursor: append ? state.nextCursor : null,
           compatMode: state.compatMode,
+          // 打开页面与点刷新要的是「现在」：60 秒新鲜窗口只留给搜索/筛选/翻页。
+          refresh: options.refresh === true,
         }),
       );
       if (disposed || generation !== catalogGeneration) return;
@@ -441,14 +443,19 @@ export function mount(target: HTMLElement, bridge: PageBridge): () => void {
     }
   }
 
-  function reloadCatalog() {
+  /**
+   * 重读第一页。`refresh` 表示这次必须向商城复核：页面首屏、刷新按钮与错误重试
+   * 都用它；搜索/筛选/翻页不传，交给插件后端的新鲜窗口。
+   */
+  function reloadCatalog(refresh = false) {
     resetPaging();
-    void loadCatalog();
+    void loadCatalog({ refresh });
   }
 
   // ---------- detail ----------
 
-  async function openProduct(slug: string) {
+  // 详情一律强制复核（refresh 由调用方显式给出）：版本列表旧了，新版本就装不上。
+  async function openProduct(slug: string, refresh: boolean) {
     if (!slug) return;
     const generation = detailGeneration += 1;
     state.selectedSlug = slug;
@@ -464,7 +471,8 @@ export function mount(target: HTMLElement, bridge: PageBridge): () => void {
     renderDetail();
 
     try {
-      const payload = await bridge.request(buildProductPath(slug));
+      // 详情永远要最新的版本列表：新发布的版本必须立刻可选、可装。
+      const payload = await bridge.request(buildProductPath(slug, refresh));
       if (disposed || generation !== detailGeneration) return;
       const product = parseProduct(payload);
       const view = toProductView(product, copy, state.target);
@@ -990,7 +998,8 @@ export function mount(target: HTMLElement, bridge: PageBridge): () => void {
     reloadCatalog();
   });
 
-  listen(refreshButton, "click", reloadCatalog);
+  // 刷新是操作者的显式动作：一定向商城复核，不能只是重复一次同键查询。
+  listen(refreshButton, "click", () => reloadCatalog(true));
 
   listen(moreButton, "click", () => {
     void loadCatalog({ append: true });
@@ -999,11 +1008,11 @@ export function mount(target: HTMLElement, bridge: PageBridge): () => void {
   listen(grid, "click", (event: any) => {
     const action = findAttr(event.target, "data-action", grid);
     if (action === "reload") {
-      reloadCatalog();
+      reloadCatalog(true);
       return;
     }
     const slug = findAttr(event.target, "data-slug", grid);
-    if (slug) void openProduct(slug);
+    if (slug) void openProduct(slug, true);
   });
 
   listen(dialog.surface, "click", (event: any) => {
@@ -1016,7 +1025,7 @@ export function mount(target: HTMLElement, bridge: PageBridge): () => void {
     else if (action === "copy") void copySignedUrl();
     else if (action === "open-core-install") void goCore(CORE_INSTALL_PATH);
     else if (action === "open-core") void goCore(corePathForKind(state.install.result?.type ?? productKind()));
-    else if (action === "reload-detail") void openProduct(state.selectedSlug);
+    else if (action === "reload-detail") void openProduct(state.selectedSlug, true);
   });
 
   listen(dialog.surface, "change", (event: any) => {
@@ -1043,12 +1052,13 @@ export function mount(target: HTMLElement, bridge: PageBridge): () => void {
   }
 
   renderAll();
-  void loadCatalog();
+  // 首屏必须向商城复核：新鲜窗口内的快照会让刚发布的扩展「打开页面看不见」。
+  void loadCatalog({ refresh: true });
   void auth.load();
   // 深链：`?product=<slug>` 首次挂载就打开详情，和目录请求并行、互不等待。
   // 目录落地后 state.target 会补齐，renderAll() 会让详情按真实架构重绘。
   const deepLinkSlug = readProductQuery(globalThis.location?.search ?? "");
-  if (deepLinkSlug) void openProduct(deepLinkSlug);
+  if (deepLinkSlug) void openProduct(deepLinkSlug, true);
 
   return () => {
     disposed = true;

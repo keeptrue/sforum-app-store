@@ -266,6 +266,7 @@ func (s *storeServer) renderUpdateSurface(
 	links := map[string]any{}
 
 	for _, chunk := range chunkSurfaceIDs(resources) {
+		// 徽章跟着菜单加载：不值得每次强制复核商城，60 秒新鲜窗口足够。
 		fetched, err := s.store.catalog(ctx, settings.CatalogBaseURL, catalogQuery{
 			Channel:      settings.Channel,
 			ExtensionIDs: chunk,
@@ -275,7 +276,7 @@ func (s *storeServer) renderUpdateSurface(
 			PlatformAll: true,
 			SForum:      build.CoreVersion,
 			SForumBuild: build.BuildVersion,
-		})
+		}, false)
 		if err != nil {
 			if ctx.Err() != nil {
 				log.Printf("%s: surface deadline exceeded (%s)", declaration.id, upstreamFailureReason(err))

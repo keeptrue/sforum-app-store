@@ -30,6 +30,10 @@ paths:
         # 卡片自己画「不支持当前架构」徽标。缺省与 strict 等价，所以插件只在显式 all
         # 时才往上游发这个参数。os/arch 不由调用方决定——目标平台是本进程。
         - { name: platform, in: query, schema: { type: string, enum: [strict, all] } }
+        # 插件自己的缓存指令，**不转发上游**：1 = 这次必须向商城复核，跳过 60 秒新鲜窗口。
+        # 页面首屏、刷新按钮与失败重试带它；搜索/筛选/翻页不带。缓存键不变，缓存仍参与
+        # 条件请求（304 不重传正文）与商城不可用时的 stale 兜底。
+        - { name: refresh, in: query, schema: { type: string, enum: ["1"] } }
       responses:
         "200":
           description: 目录页
@@ -54,6 +58,9 @@ paths:
       x-sforum-response-schema: sforum.store.product.response@1
       parameters:
         - { name: slug, in: query, required: true, schema: { type: string } }
+        # 语义与目录的 refresh 相同：打开详情要「现在」的版本列表，否则刚发布的版本
+        # 要等新鲜窗口过去才可选、可装。同样不转发上游。
+        - { name: refresh, in: query, schema: { type: string, enum: ["1"] } }
       responses:
         "200":
           description: 详情

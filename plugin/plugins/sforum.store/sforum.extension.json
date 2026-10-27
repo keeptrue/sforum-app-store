@@ -41,7 +41,7 @@
     "url": "https://github.com/keeptrue/sforum"
   },
   "backend": {
-    "digest": "d069655995cb33d86c14a55904173468db2b6f0dc51af1b18381af3ef6f6d8a4",
+    "digest": "7aba4bae976366e44ecc81ff21c56a312cf8f71103ab87609fe4cbc498c008f2",
     "entry": "backend/plugin",
     "hostApiVersion": "sforum.host@2",
     "protocolVersion": 2,
@@ -104,7 +104,7 @@
   "openapi": [
     {
       "contractVersion": "sforum.store.openapi.routes@1",
-      "digest": "ca52ea4c12fadb024e6313fb3c1837ac3b1532491a64aea6b333f7fb2810d2a0",
+      "digest": "4b6adf7260b3a65634b2f372ee44ad3c3cb4e908f1061af59706258a85803977",
       "id": "sforum.store.file.openapi-routes",
       "namespace": "sforum.store.api",
       "path": "openapi/routes.yaml"
@@ -112,13 +112,13 @@
   ],
   "packageFiles": [
     {
-      "digest": "d069655995cb33d86c14a55904173468db2b6f0dc51af1b18381af3ef6f6d8a4",
+      "digest": "7aba4bae976366e44ecc81ff21c56a312cf8f71103ab87609fe4cbc498c008f2",
       "id": "sforum.store.file.backend",
       "kind": "executable",
       "path": "backend/plugin"
     },
     {
-      "digest": "3dd8292029981ad25fb849473c710c1170900a6bb7ef4316f7fd20366fd77d2a",
+      "digest": "d33fc677e7063836a43f5b1c7e0711b56fcba8f25cd95d5b75a75bd811948f68",
       "id": "sforum.store.file.admin",
       "kind": "frontend",
       "path": "frontend/admin/dist/catalog.mjs"
@@ -172,7 +172,7 @@
       "version": "1"
     },
     {
-      "digest": "ca52ea4c12fadb024e6313fb3c1837ac3b1532491a64aea6b333f7fb2810d2a0",
+      "digest": "4b6adf7260b3a65634b2f372ee44ad3c3cb4e908f1061af59706258a85803977",
       "id": "sforum.store.file.openapi-routes",
       "kind": "openapi",
       "path": "openapi/routes.yaml"
@@ -366,5 +366,5 @@
   "sforumVersion": ">=3.0.19",
   "type": "plugin",
   "url": "https://github.com/keeptrue/sforum-app-store",
-  "version": "0.1.5"
+  "version": "0.1.6"
 }
