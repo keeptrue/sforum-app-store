@@ -196,8 +196,8 @@ a=$(wc -l < /tmp/sforum-dev.log); sleep 5; b=$(wc -l < /tmp/sforum-dev.log); ech
    见上面「三个硬条件」第 2 条）。
 2. GitHub App 的 **Webhook URL** → `<新地址>/api/github/webhook`，**Setup URL** →
    `<新地址>/api/github/setup`（是两格不同的输入，见 `docs/github-app.md`）。
-3. 插件设置 `sforum.store.catalog_base_url` → 新的 https 基址（留空时管理页只显示配置提示、
-   不发任何请求）。
+3. 插件设置 `sforum.store.catalog_base_url` → 新的 https 基址（默认
+   `https://app-store.dalao.me`；清空并保存后管理页只显示配置提示、不发任何请求）。
 
 三个后果，保存前先确认：
 

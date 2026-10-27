@@ -41,7 +41,7 @@
     "url": "https://github.com/keeptrue/sforum"
   },
   "backend": {
-    "digest": "56a94fa1a25f605e085f09c42eb53a88752b2c0baa5bf3c313644b0a4ab34595",
+    "digest": "d069655995cb33d86c14a55904173468db2b6f0dc51af1b18381af3ef6f6d8a4",
     "entry": "backend/plugin",
     "hostApiVersion": "sforum.host@2",
     "protocolVersion": 2,
@@ -112,7 +112,7 @@
   ],
   "packageFiles": [
     {
-      "digest": "56a94fa1a25f605e085f09c42eb53a88752b2c0baa5bf3c313644b0a4ab34595",
+      "digest": "d069655995cb33d86c14a55904173468db2b6f0dc51af1b18381af3ef6f6d8a4",
       "id": "sforum.store.file.backend",
       "kind": "executable",
       "path": "backend/plugin"
@@ -366,5 +366,5 @@
   "sforumVersion": ">=3.0.19",
   "type": "plugin",
   "url": "https://github.com/keeptrue/sforum-app-store",
-  "version": "0.1.3"
+  "version": "0.1.4"
 }

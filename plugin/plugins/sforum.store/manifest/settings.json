@@ -48,11 +48,11 @@
         "en-US": "Store base URL"
       },
       "description": {
-        "zh-CN": "商城服务端基址（https）。留空时管理页只显示配置提示，不会发起任何请求。",
-        "en-US": "Base URL of the store service (https). When empty the admin page shows a setup hint and makes no requests."
+        "zh-CN": "商城服务端基址（https）。默认指向官方商城 https://app-store.dalao.me；清空并保存后管理页只显示配置提示，不会发起任何请求。",
+        "en-US": "Base URL of the store service (https). Defaults to the official store at https://app-store.dalao.me; when cleared and saved the admin page only shows a setup hint and makes no requests."
       },
       "type": "text",
-      "default": "",
+      "default": "https://app-store.dalao.me",
       "placeholder": "https://store.example.com",
       "groupId": "catalog"
     },

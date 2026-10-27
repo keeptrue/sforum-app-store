@@ -24,6 +24,11 @@ HTTPS）；② 完整真实 provider 登录（缺 client secret 与论坛用户�
 
 ## Latest Handoff
 
+`sessions/2026-10-27-default-catalog-base-url.md` —— **默认商城地址改为 `https://app-store.dalao.me`
+（插件 0.1.4）**：清单 `default` 从空串改成该地址；后端 `resolveCatalogBaseURL` 只把默认值用在
+「own-settings 没有这个键」的场景，显式清空仍按未配置处理（不发请求）。Go 8 例 + 前端 216 pass，
+宿主 validate/test/brand check 全绿。决策 `decisions/2026-10-27-default-catalog-base-url.md`。
+
 `sessions/2026-10-27-download-auth-gate.md` —— **安装登录闸门**：`download_auth_mode`（默认
 `anonymous`）决定签发下载链接要不要商城账号。core 补了 `SecretService.Put/Clear`（写自身声明的
 secret 设置，`settings.own` + `HasSecretField` + 64 KiB + CAS 冲突可重试，SForum 仓分支

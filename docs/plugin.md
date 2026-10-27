@@ -63,7 +63,7 @@ APP_ENV=development EXTERNAL_EXTENSION_ROOTS=/path/to/sforum-app-store/plugin \
 
 | 键 | 默认 | 说明 |
 | --- | --- | --- |
-| `sforum.store.catalog_base_url` | 空 | 商城基址（https）。**留空时管理页只显示配置提示，不发任何请求** |
+| `sforum.store.catalog_base_url` | `https://app-store.dalao.me` | 商城基址（https）。新装或从未保存过设置时用这个默认值；**清空并保存后管理页只显示配置提示，不发任何请求** |
 | `sforum.store.channel` | `stable` | 目录默认频道；`stable` 只列稳定版，`beta` 含预发布 |
 | `sforum.store.account_token` | 空 | **由插件写入的 secret**（`type: secret`）。内容是商城授权后的账号凭据；设置页只显示「已配置」，不回显。手动填写只用于迁移，断开连接请用页面上的按钮 |
 

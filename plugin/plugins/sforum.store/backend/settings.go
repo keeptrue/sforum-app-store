@@ -22,6 +22,10 @@ const (
 
 	settingCatalogBaseURL = "sforum.store.catalog_base_url"
 	settingChannel        = "sforum.store.channel"
+	// defaultCatalogBaseURL 只在宿主 own-settings 里**没有**这个键时生效（新装、
+	// 或从未保存过设置）。运营显式清空后该键存在且为空，仍然按「未配置」处理：
+	// 默认值不覆盖人的选择，自建商城与「停用商城」都不需要额外开关。
+	defaultCatalogBaseURL = "https://app-store.dalao.me"
 	// settingAccountToken 是商城授权后由插件自己写入的 secret 设置
 	// （manifest/settings.json 里声明 type: secret）。内容见 accountCredential。
 	settingAccountToken = "sforum.store.account_token"
@@ -112,15 +116,31 @@ func (s *storeServer) loadSettings(ctx context.Context, routeCtx *protocolwire.R
 		return result, false
 	}
 
-	base := strings.TrimRight(strings.TrimSpace(stringValue(container[settingCatalogBaseURL])), "/")
-	if parsed, err := url.Parse(base); err == nil && parsed.Scheme == "https" && parsed.Host != "" {
-		result.CatalogBaseURL = base
-	}
+	result.CatalogBaseURL = resolveCatalogBaseURL(container)
 	if channel := strings.TrimSpace(stringValue(container[settingChannel])); channel == "beta" || channel == "stable" {
 		result.Channel = channel
 	}
 	result.AccountToken = strings.TrimSpace(stringValue(container[settingAccountToken]))
 	return result, true
+}
+
+// resolveCatalogBaseURL 把 own-settings 的 settings 容器解析成商城基址。
+//
+// 三种输入分开对待：
+//   - 键缺失（新装 / 从未保存）→ 默认地址，装上就能用；
+//   - 键存在且是合法 https → 用它（去掉尾斜杠）；
+//   - 键存在但为空或不是 https → 空串，即「运营显式清空」，页面只显示配置提示。
+func resolveCatalogBaseURL(container map[string]any) string {
+	raw, present := container[settingCatalogBaseURL]
+	if !present {
+		return defaultCatalogBaseURL
+	}
+	base := strings.TrimRight(strings.TrimSpace(stringValue(raw)), "/")
+	parsed, err := url.Parse(base)
+	if err != nil || parsed.Scheme != "https" || parsed.Host == "" {
+		return ""
+	}
+	return base
 }
 
 // invalidateSettings 在写入或清除 secret 之后调用：下一次读取必须回 Host 取，
