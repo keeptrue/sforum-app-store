@@ -1,0 +1,47 @@
+[
+  {
+    "id": "sforum.store.admin.updates.plugins",
+    "contractVersion": "sforum.store.admin.updates.plugins@3",
+    "kind": "list_column",
+    "action": "add",
+    "placementId": "core.component.page.admin.extensions.plugins",
+    "placementContractVersion": "sforum.component.page.admin.extensions.plugins@1",
+    "label": "商城更新",
+    "handler": "sforum.store.admin.updates",
+    "propsSchema": "sforum.store.admin.updates.props@1",
+    "resultSchema": "sforum.store.admin.updates.result@1",
+    "operation": "query",
+    "permission": "extension.view",
+    "priority": 10
+  },
+  {
+    "id": "sforum.store.admin.updates.themes",
+    "contractVersion": "sforum.store.admin.updates.themes@3",
+    "kind": "list_column",
+    "action": "add",
+    "placementId": "core.component.page.admin.extensions.themes",
+    "placementContractVersion": "sforum.component.page.admin.extensions.themes@1",
+    "label": "商城更新",
+    "handler": "sforum.store.admin.updates",
+    "propsSchema": "sforum.store.admin.updates.props@1",
+    "resultSchema": "sforum.store.admin.updates.result@1",
+    "operation": "query",
+    "permission": "extension.view",
+    "priority": 10
+  },
+  {
+    "id": "sforum.store.admin.updates.overview",
+    "contractVersion": "sforum.store.admin.updates.overview@3",
+    "kind": "list_column",
+    "action": "add",
+    "placementId": "core.component.page.admin.extensions",
+    "placementContractVersion": "sforum.component.page.admin.extensions@1",
+    "label": "商城更新",
+    "handler": "sforum.store.admin.updates",
+    "propsSchema": "sforum.store.admin.updates.props@1",
+    "resultSchema": "sforum.store.admin.updates.result@1",
+    "operation": "query",
+    "permission": "extension.view",
+    "priority": 10
+  }
+]

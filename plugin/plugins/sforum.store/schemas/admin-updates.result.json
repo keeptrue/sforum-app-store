@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "sforum.store admin updates result",
+  "description": "每资源一条更新徽章：cells 是徽章文案，links 是同一资源的同源后台深链（Core 只接受以 / 开头且不是 // 的路径）。",
+  "type": "object",
+  "required": ["title", "tone", "icon", "cells", "links"],
+  "properties": {
+    "title": { "type": "string", "minLength": 1, "maxLength": 160 },
+    "tone": { "enum": ["neutral", "primary", "success", "warning", "error"] },
+    "icon": { "type": "string", "pattern": "^i-(lucide|tabler)-[a-z0-9-]+$" },
+    "cells": {
+      "type": "object",
+      "maxProperties": 1000,
+      "additionalProperties": { "type": "string", "minLength": 1, "maxLength": 160 }
+    },
+    "links": {
+      "type": "object",
+      "maxProperties": 1000,
+      "additionalProperties": {
+        "type": "string",
+        "pattern": "^/[^/\\\\][^\\\\]*$",
+        "maxLength": 512
+      }
+    }
+  },
+  "additionalProperties": false
+}

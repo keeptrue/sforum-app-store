@@ -13,6 +13,7 @@
 
 import { createCopy } from "./copy";
 import { createDialog } from "./dialog";
+import { readProductQuery } from "./deep-link";
 import { buttonEl, el, fieldEl, selectEl, toggleEl } from "./dom";
 import { footNodes } from "./foot";
 import {
@@ -385,7 +386,11 @@ export function mount(target: HTMLElement, bridge: PageBridge): () => void {
       if (disposed || generation !== catalogGeneration) return;
       const document_ = parseCatalog(payload);
       // target 必须先落地：卡片徽标的架构判决要拿它当基准。
+      const previousTarget = state.target;
       state.target = document_.target ?? null;
+      // 只有 target 真的变了才重算详情：普通重载（搜索/翻页/刷新）不该把操作者
+      // 手选的版本重置回默认。
+      if (!sameTarget(previousTarget, state.target)) resyncDetailTarget();
       const incoming = document_.items.map((item) => toCatalogItemView(item, copy, state.target));
       state.items = append ? mergeItems(state.items, incoming) : incoming;
       state.total = document_.total;
@@ -458,13 +463,7 @@ export function mount(target: HTMLElement, bridge: PageBridge): () => void {
       const view = toProductView(product, copy, state.target);
       state.product = product;
       state.view = view;
-      const versions = installableReleases(view);
-      // 默认选「最新的、可安装的、支持当前架构」那一版；全都不支持时退到第一版，
-      // 让安装门禁去说明「这一版装不上」，而不是留下一个空的下拉。
-      const preferred = preferredRelease(versions, state.target, product.latestVersion ?? "");
-      const selected = preferred ?? versions[0] ?? null;
-      state.version = selected?.version ?? "";
-      state.platform = defaultPlatform(selected, state.target);
+      applyDetailSelection(view, product);
       state.detailMode = "ready";
     } catch (error) {
       if (disposed || generation !== detailGeneration) return;
@@ -492,6 +491,33 @@ export function mount(target: HTMLElement, bridge: PageBridge): () => void {
   // 平台不再由人挑：换版本时按宿主 target 重新自动匹配（精确 → any/any → 第一项）。
   function syncPlatform() {
     state.platform = defaultPlatform(currentRelease(), state.target);
+  }
+
+  /**
+   * 默认选「最新的、可安装的、支持当前架构」那一版；全都不支持时退到第一版，
+   * 让安装门禁去说明「这一版装不上」，而不是留下一个空的下拉。
+   *
+   * 抽成函数是因为深链会让详情与目录并行：target 后到时必须用同一套规则重算，
+   * 否则会沿用「还没有 target」时选中的第一项资产（多架构版本会因此装错平台）。
+   */
+  function applyDetailSelection(view: ProductView, product: ProductDto) {
+    const versions = installableReleases(view);
+    const preferred = preferredRelease(versions, state.target, product.latestVersion ?? "");
+    const selected = preferred ?? versions[0] ?? null;
+    state.version = selected?.version ?? "";
+    state.platform = defaultPlatform(selected, state.target);
+  }
+
+  function sameTarget(left: PlatformDto | null, right: PlatformDto | null) {
+    return (left?.os ?? "") === (right?.os ?? "") && (left?.arch ?? "") === (right?.arch ?? "");
+  }
+
+  /** 目录 target 后到（深链并行）时，按真实架构重算详情里的版本与安装平台。 */
+  function resyncDetailTarget() {
+    if (!state.product || !dialog.isOpen()) return;
+    const view = toProductView(state.product, copy, state.target);
+    state.view = view;
+    applyDetailSelection(view, state.product);
   }
 
   async function requestSignedUrl(): Promise<InstallUrlResponseDto> {
@@ -1007,6 +1033,10 @@ export function mount(target: HTMLElement, bridge: PageBridge): () => void {
 
   renderAll();
   void loadCatalog();
+  // 深链：`?product=<slug>` 首次挂载就打开详情，和目录请求并行、互不等待。
+  // 目录落地后 state.target 会补齐，renderAll() 会让详情按真实架构重绘。
+  const deepLinkSlug = readProductQuery(globalThis.location?.search ?? "");
+  if (deepLinkSlug) void openProduct(deepLinkSlug);
 
   return () => {
     disposed = true;

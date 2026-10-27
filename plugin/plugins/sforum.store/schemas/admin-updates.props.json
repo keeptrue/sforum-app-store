@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "sforum.store admin updates props",
+  "description": "Core 的 useAdminListSurfaces.queryInput() 逐字段发送的列表 surface 输入；三个扩展管理页共用。",
+  "type": "object",
+  "required": [
+    "placementId",
+    "placementContractVersion",
+    "kind",
+    "locale",
+    "route",
+    "resources",
+    "filters",
+    "selection",
+    "context"
+  ],
+  "properties": {
+    "placementId": {
+      "enum": [
+        "core.component.page.admin.extensions.plugins",
+        "core.component.page.admin.extensions.themes",
+        "core.component.page.admin.extensions"
+      ]
+    },
+    "placementContractVersion": {
+      "enum": [
+        "sforum.component.page.admin.extensions.plugins@1",
+        "sforum.component.page.admin.extensions.themes@1",
+        "sforum.component.page.admin.extensions@1"
+      ]
+    },
+    "kind": { "const": "list_column" },
+    "locale": { "type": "string", "minLength": 2, "maxLength": 32 },
+    "route": { "type": "object" },
+    "resources": {
+      "type": "array",
+      "maxItems": 1000,
+      "items": {
+        "type": "object",
+        "required": ["id", "attributes"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1, "maxLength": 160 },
+          "attributes": {
+            "type": "object",
+            "properties": {
+              "version": { "type": ["string", "null"] },
+              "stagedVersion": { "type": ["string", "null"] },
+              "type": { "type": ["string", "null"] },
+              "status": { "type": ["string", "null"] },
+              "source": { "type": ["string", "null"] }
+            },
+            "additionalProperties": true
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "filters": {
+      "type": "object",
+      "additionalProperties": { "type": "string", "maxLength": 160 }
+    },
+    "selection": { "type": "string", "maxLength": 160 },
+    "context": { "type": "object" }
+  },
+  "additionalProperties": true
+}
