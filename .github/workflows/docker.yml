@@ -112,6 +112,9 @@ jobs:
 
   smoke:
     needs: build
+    # 非 tag 事件里 verify-tag 被 skip，而 skip 会沿 needs 链传染：不写显式 if，这条 job 在
+    # main 上永远 skipped（2026-10-27 首次运行实测）。只认 build 成功，不看祖先的 skip。
+    if: ${{ !cancelled() && needs.build.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     services:
@@ -173,7 +176,8 @@ jobs:
   # 免得有人以为 arm64 也是验证过的。
   note-arm64:
     needs: build
-    if: github.event_name != 'pull_request'
+    # 同上：显式条件把「verify-tag 被 skip」挡在继承之外。
+    if: ${{ !cancelled() && needs.build.result == 'success' && github.event_name != 'pull_request' }}
     runs-on: ubuntu-latest
     steps:
       - run: |

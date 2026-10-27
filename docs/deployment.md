@@ -561,9 +561,14 @@ docker run --rm -v "$ASSETS_VOL:/data" -v "$PWD:/backup" postgres:17-alpine tar 
 
 ### 4.3 拉取与可见性
 
-- 包可见性随仓库：本仓是公开的（匿名 `git ls-remote` 可读），首次发布后包按 GHCR 的默认行为
-  匿名可拉。**未验证**：`docker.yml` 还没在 CI 上跑过，GHCR 里目前没有这个包。首次发布后在
-  GitHub → Packages 里核对 Visibility。
+- 包可见性随仓库：本仓当前是**私有**的，GHCR 包默认也私有 —— 匿名拉取会被拒（实测
+  `docker manifest inspect ghcr.io/keeptrue/sforum-app-store:edge` → `unauthorized`）。
+  拉取前先 `docker login ghcr.io`，token 需要 `read:packages`。仓库转公开后到
+  GitHub → Packages 里核对 Visibility，再决定是否保持私有。
+- 首次构建（2026-10-27，main `cdcf0f6`）：`build` 成功并推送了 `edge`。同一次运行里
+  `smoke` / `note-arm64` 被跳过 —— 非 tag 事件下 `verify-tag` 是 skipped，而 skip 会沿
+  `needs` 链传染，两条 job 没写显式 `if` 就一起被吞了。工作区已给它们加
+  `if: !cancelled() && needs.build.result == 'success'`，**待推送后下一次运行验证**。
 - 私有包要登录：
 
 ```bash
