@@ -788,6 +788,24 @@
 
 /* 被门禁挡住的「已安装 v…」不是动作，别让它继续长得像主按钮：降成中性面。
    全局 `:disabled` 的 55% 透明度会让强调色看起来仍可点。 */
+/* 「登录后安装」是连接入口，不是被门禁挡住的死按钮：给它强调色，和旁边的中性面区分开。
+   这条必须排在下面的「禁用主按钮降成中性面」之后仍然生效 —— 它不带 --primary，
+   所以那条规则不会命中它。 */
+.sfstore__btn--auth,
+.sfstore__btn--auth:hover:not(:disabled) {
+  border-color: var(--sfstore-accent);
+  background: var(--sfstore-accent);
+  color: var(--sfstore-accent-contrast);
+}
+
+.sfstore__btn--auth:hover:not(:disabled) {
+  filter: brightness(1.06);
+}
+
+.sfstore__btn--auth:disabled {
+  opacity: 0.55;
+}
+
 .sfstore__foot-actions .sfstore__btn--primary:disabled {
   border-color: var(--sfstore-border);
   background: var(--sfstore-surface);

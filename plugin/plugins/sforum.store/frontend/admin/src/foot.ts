@@ -91,15 +91,28 @@ export function footNodes(input: FootInput, copy: Copy): HTMLElement[] {
   const done = input.receiptLabel !== null;
   let stateText = input.stateText;
 
-  if (input.canInstall && input.gate.installable && input.authBlocked) {
+  if (input.canInstall && input.gate.installable && input.authWaiting) {
+    // 等待授权：按钮禁用并改文案。这一支必须排在 authBlocked 之前 —— 等待期间
+    // 「未连接」仍然成立，先判 blocked 会让按钮一直显示「登录后安装」且可点。
+    const waiting = buttonEl(copy.t("waitingAuthAction"), "primary");
+    waiting.setAttribute("data-action", "auth-waiting");
+    waiting.disabled = true;
+    waiting.classList.add("sfstore__foot-action", "sfstore__btn--auth");
+    actionArea.append(waiting);
+    stateText = copy.t("authWaitingHint");
+  } else if (input.canInstall && input.gate.installable && input.authBlocked) {
     // 登录闸门排在安装门禁前面：门禁说的是「这一版能不能装」，闸门说的是「现在能不能签发」。
     // 两者都挡住时先说签发 —— 连接之后门禁的结论才可执行。
-    const blocked = buttonEl(copy.t("loginRequiredAction"), "primary");
-    blocked.setAttribute("data-action", "install-auth-blocked");
-    blocked.disabled = true;
-    blocked.classList.add("sfstore__foot-action");
-    actionArea.append(blocked);
-    if (stateText === "") stateText = copy.t("loginRequiredHint");
+    //
+    // 这枚按钮是**可点的**：弹窗盖住了目录顶部的连接条，这里不给入口就等于没有入口。
+    // 文案仍是「登录后安装」（说的是结果），点击动作是发起连接（说的是这一步做什么）。
+    const connect = buttonEl(copy.t("loginRequiredAction"), "primary");
+    connect.setAttribute("data-action", "auth-connect");
+    connect.classList.add("sfstore__foot-action", "sfstore__btn--auth");
+    actionArea.append(connect);
+    // 登录闸门比「支持当前架构」更该被看见：后者说的是这一版能不能装，
+    // 前者说的是「你现在点不动任何东西，先去做这件事」。
+    stateText = copy.t("loginRequiredHint");
   } else if (input.canInstall && input.gate.installable) {
     const actionButton = buttonEl(
       input.authWaiting
@@ -155,15 +168,16 @@ export function footNodes(input: FootInput, copy: Copy): HTMLElement[] {
               : copy.t("signAction"),
       "primary",
     );
+    // 旧宿主的签名路径同样要能从这里发起连接：弹窗盖住连接条时，这是唯一的入口。
     actionButton.setAttribute(
       "data-action",
-      authBlocked ? "sign-auth-blocked" : platformBlocked ? "sign-blocked" : "sign",
+      authBlocked ? "auth-connect" : platformBlocked ? "sign-blocked" : "sign",
     );
-    actionButton.disabled =
-      platformBlocked || input.pending || done || authBlocked || input.authWaiting === true;
+    actionButton.disabled = platformBlocked || input.pending || done || input.authWaiting === true;
     actionButton.classList.add("sfstore__foot-action");
+    if (authBlocked) actionButton.classList.add("sfstore__btn--auth");
     actionArea.append(actionButton);
-    if (authBlocked && stateText === "") stateText = copy.t("loginRequiredHint");
+    if (authBlocked) stateText = copy.t("loginRequiredHint");
     else if (platformBlocked && stateText === "") stateText = input.gateText;
   }
 

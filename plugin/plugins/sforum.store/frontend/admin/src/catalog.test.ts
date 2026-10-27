@@ -2903,15 +2903,35 @@ describe("connecting the store", () => {
     expect(target.querySelector('[data-action="auth-connect"]')).toBeNull();
   });
 
-  test("the install button says「登录后安装」and is disabled while blocked", async () => {
-    const bridge = fakeBridge({ authStatus: REQUIRED });
-    const context = await openFirstCard(bridge);
-    const blocked = context.document.body.querySelector('[data-action="install-auth-blocked"]') as any;
-    expect(blocked).toBeTruthy();
-    expect(blocked.textContent).toBe("登录后安装");
-    expect(blocked.disabled).toBe(true);
-    const state = context.document.body.querySelector('[data-role="foot-state"]') as any;
-    expect(state.textContent).toContain("先在目录顶部点「连接商城」");
+  test("the modal button says「登录后安装」and starts the connect flow when clicked", async () => {
+    // 真浏览器里 `window.open` 存在；测试替身没有，页面会走「弹窗被拦」分支。
+    // 这里补一个最小的 window.open，才能断言到「等待授权」那一步。
+    const scope = globalThis as any;
+    const originalOpen = scope.open;
+    scope.open = () => ({ location: { href: "" }, close() {} });
+    try {
+      const bridge = fakeBridge({ authStatus: REQUIRED });
+      const context = await openFirstCard(bridge);
+      const connect = context.document.body.querySelector('[data-action="auth-connect"]') as any;
+      expect(connect).toBeTruthy();
+      expect(connect.textContent).toBe("登录后安装");
+      // 弹窗盖住了目录顶部的连接条：这枚按钮必须是可点的入口，不能是一枚死按钮。
+      expect(connect.disabled).toBe(false);
+      expect(connect.className).toContain("sfstore__btn--auth");
+      const state = context.document.body.querySelector('[data-role="foot-state"]') as any;
+      expect(state.textContent).toContain("会打开商城授权页");
+
+      dialogClick(context, '[data-action="auth-connect"]');
+      await flush();
+      expect(bridge.requests.some((entry) => entry.path === "/api/store/auth/start")).toBe(true);
+      // 等待授权期间按钮禁用并改文案，避免重复开窗。
+      const waiting = context.document.body.querySelector('[data-action="auth-waiting"]') as any;
+      expect(waiting).toBeTruthy();
+      expect(waiting.disabled).toBe(true);
+      expect(waiting.textContent).toBe("等待商城授权…");
+    } finally {
+      scope.open = originalOpen;
+    }
   });
 
   test("a connected store installs with the normal button", async () => {
@@ -2933,9 +2953,9 @@ describe("connecting the store", () => {
     click(context.target, '[data-action="auth-disconnect"]');
     await flush();
 
-    const blocked = context.document.body.querySelector('[data-action="install-auth-blocked"]') as any;
-    expect(blocked).toBeTruthy();
-    expect(blocked.disabled).toBe(true);
+    const connect = context.document.body.querySelector('[data-action="auth-connect"]') as any;
+    expect(connect).toBeTruthy();
+    expect(connect.textContent).toBe("登录后安装");
   });
 
   test("en-US says the same thing in English", async () => {
@@ -2943,8 +2963,8 @@ describe("connecting the store", () => {
     const context = await openFirstCard(bridge);
     const bar = context.target.querySelector('[data-role="auth"]') as any;
     expect(bar.textContent).toContain("Connect store");
-    const blocked = context.document.body.querySelector('[data-action="install-auth-blocked"]') as any;
-    expect(blocked.textContent).toBe("Sign in to install");
+    const connect = context.document.body.querySelector('[data-action="auth-connect"]') as any;
+    expect(connect.textContent).toBe("Sign in to install");
     expect(bar.textContent).not.toMatch(/[\u4e00-\u9fff]/);
   });
 });

@@ -196,9 +196,10 @@ const ZH = {
   authFailedWith: "连接商城失败：{detail}",
   authPopupBlocked: "浏览器拦截了新标签。请允许弹窗后重试。",
   authTabFailedTitle: "连接商城没有完成",
+  authWaitingHint: "已在新标签页打开商城授权页，等你允许后按钮会恢复。",
   loginRequiredAction: "登录后安装",
   waitingAuthAction: "等待商城授权…",
-  loginRequiredHint: "商城要求登录：先在目录顶部点「连接商城」，之后安装都不再要求登录。",
+  loginRequiredHint: "商城要求登录：点「登录后安装」会打开商城授权页，允许之后安装不再要求登录。",
 
   installPermissionDenied: "没有安装权限",
   installCancelled: "已取消（离开页面会中断安装）",
@@ -396,10 +397,11 @@ const EN: Record<CopyKey, string> = {
   authFailedWith: "Could not connect the store: {detail}",
   authPopupBlocked: "The browser blocked the new tab. Allow pop-ups and retry.",
   authTabFailedTitle: "Connecting the store did not finish",
+  authWaitingHint: "The store approval page is open in a new tab; the button returns once you allow it.",
   loginRequiredAction: "Sign in to install",
   waitingAuthAction: "Waiting for the store…",
   loginRequiredHint:
-    "This store requires signing in: use “Connect store” at the top of the catalog once, and later installs will not ask again.",
+    "This store requires signing in: “Sign in to install” opens the store approval page, and later installs will not ask again.",
 
   installPermissionDenied: "No permission to install",
   installCancelled: "Cancelled (leaving the page aborts the install)",

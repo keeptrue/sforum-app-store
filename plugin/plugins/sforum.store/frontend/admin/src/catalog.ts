@@ -1010,6 +1010,8 @@ export function mount(target: HTMLElement, bridge: PageBridge): () => void {
     const action = findAttr(event.target, "data-action", dialog.surface);
     if (!action) return;
     if (action === "install") void startInstall();
+    // 「登录后安装」：弹窗盖住了目录顶部的连接条，这枚按钮就是连接入口。
+    else if (action === "auth-connect") void auth.connect();
     else if (action === "sign") void startSign();
     else if (action === "copy") void copySignedUrl();
     else if (action === "open-core-install") void goCore(CORE_INSTALL_PATH);
