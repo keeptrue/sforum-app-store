@@ -44,3 +44,14 @@
 - 告警关闭条件：默认分支的依赖图看到 `file-type >= 21.3.1`（即本次 lockfile 推送）后，
   Dependabot 自动把 #1 标成 fixed；若没有自动关，就 `PATCH /dependabot/alerts/1`
   写 `{"state":"fixed"}`（`fixed_at` 需要等重新扫描，不能手填）。
+
+## 结果（2026-10-27 22:45 +08:00）
+
+- Dependabot #1 **自动转 `fixed`**，`fixed_at = 2026-10-27T14:36:20Z`（push 后 1 秒，默认分支
+  依赖图看到 `file-type@21.3.4`），不需要手工 PATCH。
+- `release.yml` run `40522716501` 1m50s 全绿：v0.1.5 Release 带四平台 zip + SBOM +
+  `SHA256SUMS`；本地 `sha256sum -c` 对 `linux_amd64` 通过，包内清单 `0.1.5` / 7 routes /
+  18 packageFiles。
+- `docker.yml` run `40522716342` 全绿：verify-tag → build（amd64+arm64）→ smoke（真 Postgres
+  跑 migrate + web + worker）→ note-arm64。镜像 tag `0.1.5` / `0.1` / `latest`。
+- `ci.yml`（main）run `40522704666` 1m37s 全绿。
