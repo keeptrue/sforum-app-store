@@ -1250,21 +1250,9 @@ describe("install and enable", () => {
       expectedVersion: "1.4.2",
     });
 
-    const receipt = context.document.body.querySelector(".sfstore__receipt") as any;
-    expect(receipt.getAttribute("data-outcome")).toBe("enabled");
-    expect(receipt.textContent).toContain("已启用");
-    expect(receipt.textContent).toContain("宿主已启用这个扩展");
-    // 已经在跑：不能再劝人去 core 完成启用/信任。
-    expect(receipt.textContent).not.toContain("启用与信任在 core 完成");
-    expect(receipt.textContent).not.toContain("去 core 完成升级");
-    expect(receipt.textContent).toContain(SIGNED.sha256);
-
-    expect(context.document.body.querySelector('[data-role="foot-state"]')!.textContent).toBe(
-      "已启用 · v1.4.2",
-    );
-    const action = context.document.body.querySelector('[data-action="install"]') as any;
-    expect(action.textContent).toBe("已启用");
-    expect(action.disabled).toBe(true);
+    // 宿主已经把它跑起来了：详情让位，页面上不再留第二层回执（回执文案由 toast 讲）。
+    expect(context.document.body.querySelector(".sfstore__overlay")).toBeNull();
+    expect(context.document.body.querySelector(".sfstore__receipt")).toBeNull();
     expect(bridge.toasts.at(-1)).toEqual({
       title: "已启用",
       description: "宿主已启用这个扩展，不用再去 core。",
@@ -1281,16 +1269,13 @@ describe("install and enable", () => {
     dialogClick(context, '[data-action="install"]');
     await flush();
 
-    const receipt = context.document.body.querySelector(".sfstore__receipt") as any;
-    expect(receipt.getAttribute("data-outcome")).toBe("upgraded");
-    expect(receipt.textContent).toContain("已升级");
-    expect(receipt.textContent).toContain("宿主已把已启用的扩展升级到这个版本");
-    expect(context.document.body.querySelector('[data-role="foot-state"]')!.textContent).toBe(
-      "已升级 · v1.4.2",
-    );
-    expect((context.document.body.querySelector('[data-action="install"]') as any).textContent).toBe(
-      "已升级",
-    );
+    // 升级同样交给宿主的弹窗，商城详情收起。
+    expect(context.document.body.querySelector(".sfstore__overlay")).toBeNull();
+    expect(bridge.toasts.at(-1)).toEqual({
+      title: "已升级",
+      description: "宿主已把已启用的扩展升级到这个版本。",
+      kind: "success",
+    });
   });
 
   test("outcome staged from a new host still says staged and points at core", async () => {
@@ -1394,7 +1379,9 @@ describe("install and enable", () => {
     release({ ...RESULT, outcome: "enabled" });
     await flush();
     expect(overlay.style.zIndex).toBeUndefined();
-    expect(dialogHTML(context)).toContain("已启用");
+    // 宿主已经在跑：遮罩被移除，全程没有改写层级（层级交给宿主）。
+    expect(context.document.body.querySelector('[data-role="dialog-overlay"]')).toBeNull();
+    expect(bridge.toasts.at(-1)?.title).toBe("已启用");
   });
 
   test("an activate-phase failure says installed-not-enabled and never offers a reinstall", async () => {

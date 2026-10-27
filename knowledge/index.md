@@ -24,6 +24,12 @@ HTTPS）；② 完整真实 provider 登录（缺 client secret 与论坛用户�
 
 ## Latest Handoff
 
+`sessions/2026-10-28-store-dialog-handoff.md` —— **商城详情让位（插件 0.1.7）**：宿主回报
+`enabled` / `upgraded` 后商城详情弹窗自动收起，回执交给宿主的成功弹窗；`staged` / `partial` /
+`failed` 仍留着（回执里有「去 core 启用」与重试）。`dialog.close()` 必须排在
+`refreshInstallArea()` 之后，否则被 `pending` 挡住。两条 `enabled`/`upgraded` 回执用例改成断言
+遮罩已移除 + toast 文案；前端 219 pass、`build.sh` digests 1 updated、清单 0.1.7。
+
 `sessions/2026-10-28-catalog-cache-revalidation.md` —— **商城页「新插件不出现」（插件 0.1.6）**：
 根因是插件后端 `cachedJSON` 的 10 分钟新鲜窗口——首屏（`compat` 省略）命中常热键，窗口内
 直接返回内存快照、不发请求；勾选兼容开关换了查询键才被迫取数，刷新按钮同键所以没反应。

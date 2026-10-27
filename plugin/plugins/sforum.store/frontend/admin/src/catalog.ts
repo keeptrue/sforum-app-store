@@ -617,6 +617,8 @@ export function mount(target: HTMLElement, bridge: PageBridge): () => void {
     refreshInstallArea();
 
     let stage: "sign" | "install" = "sign";
+    // 宿主回报「已在跑」时把详情让位：成功回执由宿主的弹窗讲，两层叠着只会互相遮。
+    let closeOnReceipt = false;
     try {
       const signed = await requestSignedUrl();
       stage = "install";
@@ -625,6 +627,7 @@ export function mount(target: HTMLElement, bridge: PageBridge): () => void {
       );
       if (disposed) return;
       state.install = receiptState(result);
+      closeOnReceipt = state.install.status === "enabled";
       notifyReceipt(state.install.outcome);
     } catch (error) {
       if (disposed) return;
@@ -644,6 +647,10 @@ export function mount(target: HTMLElement, bridge: PageBridge): () => void {
     } finally {
       if (!disposed) {
         refreshInstallArea();
+        // 先重绘再关：close() 会拒绝在 pending 状态下关闭，而 pending 只有
+        // refreshInstallArea 里的 setPending 才会解除。暂存态不关 —— 回执里还有
+        // 「去 core 启用」的交接入口。
+        if (closeOnReceipt) dialog.close();
         restoreDialogFocus();
       }
     }

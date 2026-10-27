@@ -118,7 +118,7 @@
       "path": "backend/plugin"
     },
     {
-      "digest": "d33fc677e7063836a43f5b1c7e0711b56fcba8f25cd95d5b75a75bd811948f68",
+      "digest": "e5262ba00eb69c9eb3f144b8e72cd4536eb862e62a7c42fc4fea977606856baa",
       "id": "sforum.store.file.admin",
       "kind": "frontend",
       "path": "frontend/admin/dist/catalog.mjs"
@@ -366,5 +366,5 @@
   "sforumVersion": ">=3.0.19",
   "type": "plugin",
   "url": "https://github.com/keeptrue/sforum-app-store",
-  "version": "0.1.6"
+  "version": "0.1.7"
 }
