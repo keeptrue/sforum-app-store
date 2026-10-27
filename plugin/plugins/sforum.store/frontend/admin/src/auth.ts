@@ -11,7 +11,7 @@
 
 import { buttonEl, el } from "./dom";
 import type { Copy } from "./copy";
-import { formatDateTime } from "./logic";
+import { formatDateTime, readFailure } from "./logic";
 
 export const AUTH_STATUS_PATH = "/api/store/auth/status";
 export const AUTH_START_PATH = "/api/store/auth/start";
@@ -129,11 +129,18 @@ function readMode(value: unknown): AuthMode {
   return value === "account_required" || value === "unsupported" ? value : "anonymous";
 }
 
-/** 商城/插件给的错误码 → 页面文案。未知码按通用失败处理。 */
+/**
+ * 商城/插件/宿主给的失败 → 页面文案。
+ *
+ * 三条来源的错误形状不一样，`readFailure` 是唯一解析器：插件的裸 JSON 文档、宿主的
+ * `{code, message, data}` 信封、以及 fetch 的 HTTP 错误。只看 `error.data.code`
+ * 会把「插件正在重启（宿主 503）」读成空码，最后落到一句什么都没说的通用失败。
+ */
 export function authErrorMessage(
   code: string,
   copy: Copy,
   detail?: string,
+  status = 0,
 ): string {
   switch (code) {
     case "not_configured":
@@ -148,15 +155,27 @@ export function authErrorMessage(
       return copy.t("authSecretWriteFailed");
     case "login_required":
       return copy.t("authLoginRequired");
-    default:
-      return detail ? copy.t("authFailedWith", { detail }) : copy.t("authFailed");
   }
+  // 没有插件错误码时按 HTTP 状态说人话：这一层几乎总是「宿主/商城暂时不可用」。
+  if (status === 429) return copy.t("authSlowDown");
+  if (status === 403) return copy.t("authForbidden");
+  if (status >= 500) return copy.t("authHostUnavailable");
+  return detail ? copy.t("authFailedWith", { detail }) : copy.t("authFailed");
 }
 
-function errorCodeOf(error: unknown): string {
-  const candidate = error as { data?: { code?: unknown }; status?: unknown } | null;
-  const code = candidate?.data?.code;
-  return typeof code === "string" ? code : "";
+/** 一次失败的三元组：稳定码、HTTP 状态、可读 detail。 */
+function failureOf(error: unknown): { code: string; status: number; detail: string } {
+  const failure = readFailure(error);
+  return {
+    code: failure.code,
+    status: failure.status,
+    detail: failure.detail ?? "",
+  };
+}
+
+function authMessageFor(error: unknown, copy: Copy): string {
+  const { code, status, detail } = failureOf(error);
+  return authErrorMessage(code, copy, detail, status);
 }
 
 export type AuthController = {
@@ -291,11 +310,10 @@ export function createAuthController(deps: AuthDeps): AuthController {
     } catch (error) {
       if (disposed) return;
       // 读不到状态不该让页面变砖：按「不知道」处理，安装照旧走（商城会用 401 说话）。
-      const code = errorCodeOf(error);
       patch({
         phase: "error",
         mode: "anonymous",
-        message: authErrorMessage(code, copy),
+        message: authMessageFor(error, copy),
       });
     }
   }
@@ -313,7 +331,7 @@ export function createAuthController(deps: AuthDeps): AuthController {
         body: {},
       });
     } catch (error) {
-      const message = authErrorMessage(errorCodeOf(error), copy);
+      const message = authMessageFor(error, copy);
       // 先开窗后请求，请求失败时那个标签页还是 about:blank。把它写成一句人能读的话，
       // 而不是留一张白纸让操作者以为「点坏了」。
       explainInTab(tab, copy.t("authTabFailedTitle"), message);
@@ -377,7 +395,7 @@ export function createAuthController(deps: AuthDeps): AuthController {
     } catch (error) {
       if (disposed) return;
       stopPolling();
-      patch({ phase: "error", message: authErrorMessage(errorCodeOf(error), copy) });
+      patch({ phase: "error", message: authMessageFor(error, copy) });
       return;
     }
     if (disposed) return;
@@ -418,7 +436,7 @@ export function createAuthController(deps: AuthDeps): AuthController {
       patch({ phase: "idle", connected: false, account: null, expiresAt: null, message: "", code: "" });
     } catch (error) {
       if (disposed) return;
-      patch({ phase: "error", message: authErrorMessage(errorCodeOf(error), copy) });
+      patch({ phase: "error", message: authMessageFor(error, copy) });
     }
   }
 

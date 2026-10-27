@@ -314,7 +314,8 @@ describe("connect flow", () => {
     await h.controller.connect();
     expect(closed).toBe(false);
     expect(written).toContain("连接商城没有完成");
-    expect(written).toContain("连接商城失败");
+    // 502 且没有插件错误码：说的是「暂时不可用」，不是一句什么都没说的「失败」。
+    expect(written).toContain("暂时不可用");
     expect(h.controller.snapshot().phase).toBe("error");
   });
 
@@ -427,6 +428,13 @@ describe("disconnect", () => {
 describe("copy and helpers", () => {
   test("short code matches the one on the store approval page", () => {
     expect(shortCode("abcdef12-3456-4789-8abc-def012345678")).toBe("ABCDEF12");
+  });
+
+  test("a host-level failure without a plugin code still says something specific", () => {
+    // 插件重启/路由未就绪时宿主回 5xx，信封里没有插件错误码：不能落到「失败了」。
+    expect(authErrorMessage("", copy, "", 503)).toContain("暂时不可用");
+    expect(authErrorMessage("", copy, "", 403)).toContain("插件管理权限");
+    expect(authErrorMessage("", copy, "", 429)).toContain("太频繁");
   });
 
   test("every failure code has its own sentence in both locales", () => {
