@@ -129,6 +129,36 @@ describe("runtime resolution", () => {
     expect(runtime.cookieSecure).toBe(true);
   });
 
+  test("a hand-edited row is picked up once the cache window passes", async () => {
+    // psql / 恢复备份 / 一次性脚本都不会碰 updated_at。缓存签名必须覆盖每一个会改变
+    // 行为的列，否则进程会一直拿旧模式回答（E2E 里就是靠这条抓到的）。
+    const first = await getRuntimeConfig(db);
+    expect(first.downloadAuthMode).toBe("anonymous");
+
+    await db
+      .update(storeSettings)
+      .set({ downloadAuthMode: "account_required" })
+      .where(eq(storeSettings.id, "default"));
+    // 行不存在时 update 不生效：先插一行再改，模拟「运维直接写库」。
+    const existing = await db.select().from(storeSettings).limit(1);
+    if (existing.length === 0) {
+      await db.insert(storeSettings).values({ id: "default", downloadAuthMode: "account_required" });
+    }
+
+    // 缓存仍活着：这次读到的还是旧值（15 秒窗口）。
+    expect((await getRuntimeConfig(db)).downloadAuthMode).toBe("anonymous");
+    // 窗口过去后必须重建，而不是复用同一份 config。
+    const realNow = Date.now;
+    Date.now = () => realNow() + 16_000;
+    try {
+      const refreshed = await getRuntimeConfig(db);
+      expect(refreshed.downloadAuthMode).toBe("account_required");
+      expect(refreshed.downloadAuthModeSource).toBe("database");
+    } finally {
+      Date.now = realNow;
+    }
+  });
+
   test("a stored value that no longer parses is ignored, not fatal", async () => {
     // Hand-edited row: the read path must fall back to the seed instead of bricking login.
     await db.insert(storeSettings).values({

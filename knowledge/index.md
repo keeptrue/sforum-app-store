@@ -4,7 +4,8 @@
 
 **实现阶段，S0–S6 已完成（本地验收）+ 2026-10-24 收尾轮 + 2026-10-25 产品身份单源化 +
 2026-10-26 管理页三项（更新说明渲染 / 作者信息 / 安装门禁）+ 架构可用性（`latestPlatforms` / `platform=strict|all`）+
-架构自动匹配（目录恒 `platform=all`、无架构选择、卡片给「支持 / 不支持当前架构」判决）。** `service/` 有 Next.js 骨架、
+架构自动匹配（目录恒 `platform=all`、无架构选择、卡片给「支持 / 不支持当前架构」判决）+
+2026-10-27 安装登录闸门（P0–P7 落地，默认仍 anonymous，未发版）。** `service/` 有 Next.js 骨架、
 `contracts/store-api.yaml`、Postgres/Drizzle、OAuth2 登录/会话、GitHub App 客户端、
 webhook/worker、release 同步/检测、DB 驱动的目录与详情、公开 `/api/v1`、签名下载代理、
 产品 CRUD 与内容寻址图片、审核流（首个产品人工、后续按策略自动）、开发者门户与审核台、
@@ -22,6 +23,45 @@ HTTPS）；② 完整真实 provider 登录（缺 client secret 与论坛用户�
 详见 `sessions/2026-10-24-s7-provider-contract-and-optional-items.md`。
 
 ## Latest Handoff
+
+`sessions/2026-10-27-download-auth-gate.md` —— **安装登录闸门**：`download_auth_mode`（默认
+`anonymous`）决定签发下载链接要不要商城账号。core 补了 `SecretService.Put/Clear`（写自身声明的
+secret 设置，`settings.own` + `HasSecretField` + 64 KiB + CAS 冲突可重试，SForum 仓分支
+`feat/plugin-own-secret-write`，提交 `600fa68e6`）；商城加了 `install_auth_requests` +
+`account_tokens`（只存 SHA-256、30 天、`download:issue`）、六个 `/api/v1/auth/*`、`/connect/{id}`
+授权页与 `POST /api/connect/{id}/decision`（同源 + 会话 + 条件迁移）；`download-urls` 在
+`account_required` 下按 401 五码拒绝，浏览器入口 302 到论坛登录再回同一路径；插件页加了连接条
+（`window.open` 同步开窗、2 秒轮询、5 分钟截止），令牌经宿主 `SecretService.Put` 写进加密设置，
+设置页只显示「已配置」。清单权限收紧到 `extension.plugin.manage`（catalog 页 + 七条路由），
+这是行为变化。**E2E 真跑过**：匿名 401 → 授权 → 批准 → 兑换 → 签发 200 → 重放 409 → 撤销后
+401 → 重启后仍可用 → 切回 anonymous 恢复；审计里没有明文令牌。顺手修了运行时缓存签名漏列
+（运维直接写库时不生效）。**未发版、未切 required**：`sforumVersion` 与 `ci.yml` 的 SForum ref
+等 core 发版后同批移动；真机宿主链路未验证（本机没有带登录会话的论坛实例）。
+证据：商城 **883 pass / 74 files**、插件前端 **210 pass**、Go **24 新例**、
+`build.sh` digests 0 updated、截图 `tmp/{plugin-auth,store-connect,store-product}-*.png`。
+
+`sessions/2026-10-27-dev-lock-incident.md` —— dev 进程管理与 Next dev 锁：03:37 起的 `next-server`
+在 05:00 仍持 `service/.next/dev/lock`，新的 `bun run dev` 绑上 4000、打印 `Ready` 后才去拿锁，
+拿不到就 `exit 1`（所以会出现「端口空着却说 already running」）；照提示 `kill` 锁里的 pid 三次都
+没释放，杀 `next dev` CLI 父进程 213 ms 干净退出。`bun run dev` / `bun run start` 改走自研
+`scripts/supervise.ts`（`dev:web |` / `worker  |` 前缀、第一个子进程退出即 SIGTERM 其余、5 秒补
+SIGKILL、`tmp/supervise.json`），新增 `bun run dev:stop [--force]` 按 **session 成员 + 进程树**收
+web + worker（含 PPID=1 的孤儿；锁不可读但 `:4000` 有监听时先证明 `cwd`/命令行再收）并删锁，
+`scripts/dev-lock.ts` 起 dev 前预检锁：`running` 要过 `cwd == service/` 归属证明（别的 checkout 的
+`next-server` 只告警、不误杀也不误拒），陈旧锁删前还要看锁里的 port 上有没有本仓 next 在监听。
+deployment / AGENTS / README 三处口径统一，删掉 `--parallel` 那句错的「任一子进程退出，另一个会
+被终止」。决策 `decisions/2026-10-27-dev-supervisor-and-lock.md`。
+
+`sessions/2026-10-27-extension-update-badges.md` —— 扩展管理三页的「可更新」徽章：商城插件声明
+三条 `list_column` Admin Surface（`sforum.store.admin.updates.{plugins,themes,overview}`，surface
+`contractVersion` 各自 `@2`、placement 仍 `@1`，权限 `extension.view`），按页面资源批量问目录
+新参数 `extensionIds`（≤200、去重排序、非法 400 `invalid_query`），比较基线取
+`max(active, staged)`，`compat=all` + `platform=all` 避免宿主架构藏掉候选，5s 预算、任何一组
+失败整体 fail closed；徽章深链 `?product=<slug>` 直接打开既有详情弹窗（target 后到时按真实架构
+重算版本与安装平台）。失败按状态码分档：只有 400 当旧商城 → 空结果，401/403/404 不可重试，
+429/5xx/传输可重试。插件 `0.1.1` 已 promote（active 22851 / enabled，revision 841）。证据：
+backend `9f07867b…`、`catalog.mjs` `557a9dd0…`（60,865 B）、前端 185 pass、Go 17 用例、宿主
+`extension validate` OK。决策 `decisions/2026-10-27-update-badges-via-admin-surface.md`。
 
 `sessions/2026-10-26-arch-selection-removal-handoff.md` —— 商城不再提供架构选择：目录恒发
 `platform=all`（产品不因异架构消失），删「只看支持当前架构」开关与安装条平台下拉；平台由
@@ -288,6 +328,7 @@ slug 一致）、私钥先加后删的轮换、`github_config_unreadable` 与「
 
 | 计划 | 状态 |
 | --- | --- |
+| `plans/2026-10-27-download-auth-gate.md` | **ready（2026-10-27 批准；新对话开工）** —— 下载签发前必须登录：商城 `/connect/{id}` 授权页 + 插件后端轮询、后端持有 30 天令牌并写入宿主加密 secret 设置、core 新增 `SecretService.Put/Clear`、`download_auth_mode` 默认 `anonymous`；单 agent 执行顺序见 §10；交接见计划 §13 |
 | `plans/2026-10-25-host-capability-catalog.md` | **active（2026-10-25 交付，待人工验收）** —— 商品页与审核台跟随 SForum 宿主能力目录显示标签与 risk 等级（vendored 快照 13 条 + lock + `capabilities:check` 进 CI），只对齐展示，自动发布闸门不变；决策 `decisions/2026-10-25-host-capability-catalog.md` |
 | `plans/2026-10-25-admin-console.md` | **active（2026-10-25 交付 v1，待人工验收转 completed）** —— 管理员本地身份 + 可配置后台路径 + setup token 注册 + OAuth2 后台配置 + 六个模块；决策记录 `decisions/2026-10-25-admin-local-identity.md`；交接 `sessions/2026-10-25-admin-console.md` |
 | `plans/2026-10-24-app-store-service.md` | **active（S0–S6 完成 + 收尾轮，待人工确认转 completed）** —— 服务端与插件的完整设计；Q1–Q6 已裁决，六个阶段均已交付；收尾轮修掉 provider 契约漂移并关闭三项遗留；仅剩「真实登录 / 浏览器点击安装 / 真实 GitHub App」未验证 |

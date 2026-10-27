@@ -12,6 +12,7 @@
 | 菜单分组 | 清单 `admin.pages[].group`（同一扩展的多个 menu 页收进一个可展开一级菜单） | 两个页平铺在「扩展管理」里，功能不受影响 |
 | 宿主版本 | v2 握手 `host_build` → 插件 `Server.HostBuild()` | 目录恒为 `compatibility=unknown`、不过滤、不显示「兼容」判词 |
 | 已装清单 | Query `sforum.core.extensions.inventory.list`（能力 `extensions.read`，中等风险） | 不显示「已安装 / 可更新」，其余功能不受影响 |
+| 写入自身 secret | `SecretService.Put/Clear`（host API v2，能力 `settings.own`） | 商城要求登录时连接流程失败并提示 `secret_write_failed`；匿名模式不受影响 |
 
 前三条是**特性检测 + 降级**：旧宿主只会少功能，不会把页面打崩。
 
@@ -30,8 +31,10 @@
 | 设置 | `/settings` | 宿主 Schema UI（`view=settings`），字段来自 `manifest/settings.json` |
 
 一级分组由清单的 `group: "应用商城"` 声明，容器归宿主；组图标取组内 `order` 最小那一页的
-图标。设置页声明 `permission: "extension.plugin.manage"`，与宿主
-`canManageExtensionSettings` 的判定对齐：没有插件管理权限的管理员看不到这个子项。
+图标。**两个页面都声明 `permission: "extension.plugin.manage"`**，七条路由也统一用
+`access: "permission"` + `core.guard.permission`：能进安装页 = 持有插件管理权限。
+这是 0.2 起的行为变化——`extension.view` 用户不再看到安装页，也调不到 `/api/store/*`
+（安装会签发下载链接，那是有副作用的动作，不该只读角色能做）。
 
 `admin.entry` 是 `/catalog`，扩展列表里的「管理」按钮直达商城页。
 
@@ -62,9 +65,37 @@ APP_ENV=development EXTERNAL_EXTENSION_ROOTS=/path/to/sforum-app-store/plugin \
 | --- | --- | --- |
 | `sforum.store.catalog_base_url` | 空 | 商城基址（https）。**留空时管理页只显示配置提示，不发任何请求** |
 | `sforum.store.channel` | `stable` | 目录默认频道；`stable` 只列稳定版，`beta` 含预发布 |
+| `sforum.store.account_token` | 空 | **由插件写入的 secret**（`type: secret`）。内容是商城授权后的账号凭据；设置页只显示「已配置」，不回显。手动填写只用于迁移，断开连接请用页面上的按钮 |
 
 设置值由插件后端通过宿主的 own-settings 查询读取，缓存在进程内 60 秒；管理员改完设置后
 最迟一分钟生效（重开管理页即可）。
+
+### 4.1 连接商城（下载登录要求）
+
+商城把签发下载链接改成「需要账号」之后（见 `docs/deployment.md` §7.5），插件页顶部会出现连接条：
+
+| 状态 | 连接条 | 安装按钮 |
+| --- | --- | --- |
+| 商城匿名（默认） | 不显示 | 正常 |
+| 需要登录、未连接 | 「商城要求登录后才能安装扩展」+「连接商城」 | 禁用，文案「登录后安装」 |
+| 等待授权 | 「已在新标签打开商城授权页…（短码 XXXXXXXX）」+「取消」 | 禁用，文案「等待商城授权…」 |
+| 已连接 | 「已连接为 @x。令牌有效至 …」+「断开连接」 | 正常 |
+
+点「连接商城」之后：
+
+1. 页面**同步**开一个 `about:blank` 新标签（`opener` 置空），再向后端要授权地址；
+2. 后端生成 PKCE verifier（只留在进程内存）、向商城要一个请求 id，返回授权页 URL；
+   页面校验 URL 与配置的商城地址同源后导航那个标签；
+3. 管理员在商城 `/connect/{id}` 上看到商城账号、来源论坛、插件上报的名字与**短码**，
+   确认短码和插件页上的一致后再批准；
+4. 页面每 2 秒轮询一次，批准后后端用 verifier 兑换令牌，写进宿主的加密 secret 设置；
+5. 页面显示「已连接为 @x」，安装按钮恢复。
+
+令牌 30 天有效；「断开连接」会尽力撤销上游令牌并清空宿主 secret。令牌过期、被撤销或账号停用时，
+下一次安装会收到 401，插件会清掉本地凭据并把页面翻回「连接商城」。
+
+**旧商城**（没有 `/api/v1/auth/mode`）会得到 `mode: unsupported`，连接条不显示、安装照旧匿名。
+**旧 core**（没有 `SecretService.Put`）装不上这个包——清单 `sforumVersion` 会先拦下。
 
 ## 5. 兼容性判定
 

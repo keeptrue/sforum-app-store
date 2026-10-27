@@ -166,6 +166,19 @@ plugins/sforum-oauth2-provider/         # 多包/归档仓库：包在子目录�
 - 撤回不删除历史；再上架要发新版本。整个产品下架由审核员执行（`delisted`），恢复需重新提交
   与审核。
 
+## 6.1 下载链接可能要求登录
+
+商城可以把「签发下载链接」改成需要商城账号（运营在后台「系统设置 → 下载登录要求」切换，
+默认仍是匿名）。对你的产品没有额外要求，但如果你自己写脚本调 API，需要知道这三件事：
+
+- `POST /api/v1/download-urls` 在 `account_required` 模式下没有有效令牌会回 **401**，稳定错误码：
+  `login_required` / `token_expired` / `token_revoked` / `account_disabled` / `insufficient_scope`。
+  令牌由 SForum 插件在「连接商城」授权后持有，脚本里拿不到，也不该去伪造。
+- 浏览器入口 `GET /api/v1/products/{slug}/download/{os}/{arch}` 同样：未登录会 302 到论坛登录，
+  登录后 303 回同一路径再 302 到签名地址。
+- **签发是账号级，链接仍是 bearer**：拿到签名 URL 之后 30 分钟内谁都能下载，商城不会为每一次
+  字节请求再验一次身份。所以「闸门」拦的是拿链接，不是字节——需要更强约束时用短 TTL 或撤回。
+
 ## 7. 发布前检查清单
 
 - [ ] `sforum.extension.json` 通过 manifest v3 校验，`version` 是严格 semver。

@@ -223,6 +223,18 @@ function buildConfig(row: SettingsRow | null): RuntimeConfig {
   };
 }
 
+/** Content signature of the settings row: any behavioural column changing invalidates the cache. */
+function settingsSignature(row: SettingsRow): string {
+  return [
+    row.updatedAt.getTime(),
+    row.publicUrl ?? "",
+    row.downloadTtlSeconds ?? "",
+    row.downloadMode ?? "",
+    row.downloadAuthMode ?? "",
+    JSON.stringify(row.rateLimits ?? {}),
+  ].join("|");
+}
+
 /**
  * The one reader. Callers that must not see a cached value (the console right after its own
  * save, `/api/health`) pass `{ fresh: true }`.
@@ -235,7 +247,12 @@ export async function getRuntimeConfig(
   if (!options.fresh && cache && cache.expiresAt > now) return cache.config;
 
   const row = await readRow(db);
-  const signature = row ? `${row.updatedAt.getTime()}:${row.publicUrl ?? ""}` : "none";
+  // The signature must cover **every column the resolver reads**, not just `updated_at`:
+  // a row edited by hand (psql, a restore, a one-off script) never touches `updated_at`, and
+  // a signature that ignored the other columns would keep serving the old mode for the life
+  // of the process. `rate_limits` is a small object; stringifying it is cheaper than a bug
+  // where a tightened limit silently does not apply.
+  const signature = row ? settingsSignature(row) : "none";
   // Same signature → hand back the same object. Rate-limit callers compare rules by identity
   // nowhere today, but keeping the reference stable makes the cache observable in tests.
   const reusable = cache?.signature === signature ? cache.config : null;
