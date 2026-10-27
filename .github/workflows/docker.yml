@@ -1,0 +1,181 @@
+name: docker
+
+# 镜像：ghcr.io/keeptrue/sforum-app-store
+#
+# 预期产物（tag 规则的全部行为，四行看完就够）：
+#   push main       → edge
+#   push v1.2.3     → 1.2.3 + 1.2 + latest
+#   push v1.2.3-rc1 → 1.2.3-rc1（预发布，无 latest）
+#   push vfoo       → verify-tag gate 失败，不构建、不推送
+#   pull_request    → 只构建 amd64 的 pr-N，不推送，再跑一次 smoke
+#
+# 为什么要有 verify-tag：`latest` 只能来自正式版 semver。metadata-action v5 的
+# `type=ref,event=tag` 在 flavor=auto 下会硬编码 latest=true（meta.ts:304-310），于是
+# 任何非 semver 的 v* 标签都会把 latest 顶到任意 commit。所以这里两道：gate 拒掉非法标签，
+# 并且 tags 列表里不再有 type=ref,event=tag。
+#
+# 多架构只在推送时出（linux/amd64 + linux/arm64，走 QEMU）；PR 只构 amd64 省时间。
+# smoke 与发布解耦：它自己 build 一次 amd64 本地镜像，起真实 Postgres 跑
+# migrate → web → worker，断言 /api/health 200 且 worker 打出 [worker] ready ——
+# 「构建成功」不算能用，这条才算。
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE: ghcr.io/keeptrue/sforum-app-store
+
+# 同一 ref 的构建串行：两个 PR 推送抢同一个 gha 缓存会互相顶掉；tag 构建更不能并行，
+# 否则 latest 可能被旧 commit 覆盖。PR 允许取消前一次，main/tag 不取消（保证 tag 一定出镜像）。
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # 只在 tag 事件跑。非 semver 标签直接失败：镜像 tag 与 latest 都从它派生，
+  # 格式不对就别发（比事后从 registry 撤 latest 便宜）。
+  verify-tag:
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    steps:
+      - name: 标签必须是 semver
+        run: |
+          if [[ ! "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error title=标签格式::${GITHUB_REF_NAME} 不是 semver（要求 vMAJOR.MINOR.PATCH[-prerelease]）。镜像 tag 与 latest 都从它派生，格式不对就别发。"
+            exit 1
+          fi
+
+  build:
+    # verify-tag 在非 tag 事件下是 skipped，直接 needs 会把 build 一起跳过，所以这里显式放行
+    # skipped。用 !cancelled() 而不是 always()：always() 在取消工作流时也会起构建。
+    needs: [verify-tag]
+    if: ${{ !cancelled() && (needs.verify-tag.result == 'success' || needs.verify-tag.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      # 只有推送才需要 arm64；PR 单架构，省一半时间。
+      - name: Set up QEMU
+        if: github.event_name != 'pull_request'
+        uses: docker/setup-qemu-action@v3
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Tags and labels
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=raw,value=edge,enable=${{ github.ref == 'refs/heads/main' }}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=ref,event=pr
+          # latest 交给 flavor=auto：正式版 semver 打 latest，v1.2.3-rc1 自动跳过。
+          # 这里**不要**加 type=ref,event=tag —— 它在 flavor=auto 下会硬编码 latest=true，
+          # 正是「vfoo 顶掉 latest」那条漏洞的来源；非法标签已经由 verify-tag 挡在门外。
+          flavor: |
+            latest=auto
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: ${{ github.event_name == 'pull_request' && 'linux/amd64' || 'linux/amd64,linux/arm64' }}
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # /api/health 会回显这两个值，用来确认线上跑的是哪个 tag / commit。
+          build-args: |
+            STORE_BUILD_VERSION=${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || (github.ref == 'refs/heads/main' && 'edge' || 'dev') }}
+            STORE_BUILD_COMMIT=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  smoke:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      # 与 ci.yml 同镜像同参数：smoke 要验证的是「迁移 + web + worker 能连一个真库」。
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: store
+          POSTGRES_PASSWORD: store
+          POSTGRES_DB: store
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U store"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build smoke image (amd64, cached)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64
+          load: true
+          tags: sforum-app-store:smoke
+          build-args: |
+            STORE_BUILD_VERSION=smoke
+            STORE_BUILD_COMMIT=${{ github.sha }}
+          cache-from: type=gha
+
+      # 三个角色同一个镜像：migrate 先落库，web 起在 4000，worker 打 [worker] ready。
+      # 脚本自己生成一次性密钥，不读仓库里的任何 .env。
+      - name: Migrate + web + worker
+        env:
+          IMAGE: sforum-app-store:smoke
+          DATABASE_URL: postgres://store:store@127.0.0.1:5432/store
+        run: bash scripts/docker/smoke.sh
+
+      - name: Summary on failure
+        if: failure()
+        run: |
+          {
+            echo "### smoke 失败"
+            echo
+            echo "web / worker 的日志已经由 scripts/docker/smoke.sh 的 EXIT trap 在清理容器**之前**"
+            echo "tail 到上一步输出里（失败后没有残留容器可再收集）。"
+            echo
+            echo "本地复现：\`docker build -t sforum-app-store:smoke .\` 后跑"
+            echo "\`DATABASE_URL=postgres://store:store@127.0.0.1:5432/store bash scripts/docker/smoke.sh\`。"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # 镜像只在 amd64 上跑过 smoke；arm64 是交叉构建产物，没有证据说它能跑。
+  # 这条 job 不阻塞发布（GitHub 没有 arm64 runner），但把结论写进 summary，
+  # 免得有人以为 arm64 也是验证过的。
+  note-arm64:
+    needs: build
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          echo "### arm64 未在 CI 实跑" >> "$GITHUB_STEP_SUMMARY"
+          echo "smoke 只在 linux/amd64 上执行；arm64 是 QEMU 交叉构建的镜像。" >> "$GITHUB_STEP_SUMMARY"

@@ -6,7 +6,7 @@
 
 | 文件 | 读者 | 内容 |
 | --- | --- | --- |
-| `deployment.md` | 部署者 | 部署矩阵、必需环境变量、反向代理与隧道、改对外地址（后台「系统设置」，保存即生效）、初始化顺序、GitHub App 注册、升级与回滚 |
+| `deployment.md` | 部署者 | 部署矩阵、必需环境变量、Docker Compose 一键部署（密钥生成、端口与卷、初始化顺序、升级回滚、备份、常见失败）、镜像构建与发布（GHCR tag 语义、多架构）、反向代理与隧道、改对外地址（后台「系统设置」，保存即生效）、手工部署与初始化顺序、GitHub App 注册 |
 | `github-app.md` | 部署者 | GitHub App 在后台的配置、验证、webhook secret 与私钥轮换、未配置时的表现、排查 |
 | `oauth-setup.md` | 论坛管理员 | 在 SForum 建 OAuth2 应用（回调地址、scope、密钥轮换、失败码） |
 | `plugin.md` | 论坛管理员 | 商城插件 `sforum.store` 的安装、设置、安装交接语义与排查 |

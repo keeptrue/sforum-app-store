@@ -50,19 +50,20 @@ describe("workspace script wiring", () => {
     expect(missing).toEqual([]);
   });
 
-  test("dev and start run both halves through bun --parallel", () => {
-    expect(rootScripts.dev).toContain("--parallel");
-    expect(rootScripts.dev).toContain("dev:web");
-    expect(rootScripts.dev).toContain("worker");
+  test("dev and start run both halves through the supervisor", () => {
+    for (const [name, halves] of [
+      ["dev", ["dev:web", "worker"]],
+      ["start", ["start:web", "worker:prod"]],
+    ] as const) {
+      expect(rootScripts[name]).toBe(`bun run scripts/supervise.ts ${halves.join(" ")}`);
 
-    expect(rootScripts.start).toContain("--parallel");
-    expect(rootScripts.start).toContain("start:web");
-    expect(rootScripts.start).toContain("worker:prod");
-
-    for (const name of ["dev:web", "start:web", "worker", "worker:prod"]) {
-      const target = filteredTarget(rootScripts[name] ?? "");
-      expect(target).not.toBeNull();
-      expect(serviceScripts[target!]).toBeDefined();
+      for (const half of halves) {
+        const target = filteredTarget(rootScripts[half] ?? "");
+        expect(target).not.toBeNull();
+        expect(serviceScripts[target!]).toBeDefined();
+      }
     }
+
+    expect(rootScripts["dev:stop"]).toBe("bun run scripts/dev-stop.ts");
   });
 });

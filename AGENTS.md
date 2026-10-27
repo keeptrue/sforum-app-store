@@ -75,7 +75,8 @@ SForum 应用商城：一个**独立服务端**加一个 **SForum 插件**，让
 
 ```bash
 bun install
-bun run dev                 # 等价于 bun run --filter service dev
+bun run dev                 # supervisor：web + worker（scripts/supervise.ts）
+bun run dev:stop            # 停 web + worker，并清掉 Next dev 锁（--force 直接 SIGKILL）
 bun run build               # 等价于 bun run --filter service build（bun --bun next build）
 bun run contract:generate   # OpenAPI → service/src/lib/api-types.ts
 bun run manifest:check      # vendored 清单 schema 与 lock 摘要一致
@@ -118,6 +119,16 @@ Bun 跑 Next.js 生产运行时是**待验证项**，不是信仰。CI 必须跑
 `rm -rf .next` 后必现。所以 `dev` 跑 Node（`"dev": "next dev -p 4000"`，`bun run` 不带 `--bun`
 执行的就是 Node），build/start 仍按上面的 Bun 证据走。理由与重开条件见
 `knowledge/decisions/2026-10-25-dev-runtime-node.md`。
+
+**Next 16.4 的 dev 锁（2026-10-27 补）。** `experimental.lockDistDir` 默认 `true`
+（`next/dist/server/config-shared.js:287`），`next dev` 对 `service/.next/dev/lock` 持独占 flock，
+并且排在 `listen` **之后**才拿锁 —— 先绑端口、打印 `Ready`，拿不到锁才报
+`Another next dev server is already running.` 并 `exit 1`。所以「端口空着却说 already running」
+是锁被占，不是端口冲突。锁里的 `pid` 是 `next-server`，照 Next 的提示 `kill <pid>` 不管用
+（事故里三次都没释放）；停机走 `Ctrl+C` 或 `bun run dev:stop`（`--force` 直接 SIGKILL），陈旧锁
+由 supervisor 起 dev 前自动清。`bun run dev` / `bun run start` 现在都走 `scripts/supervise.ts`
+（前缀 + fail-fast + 5 秒 SIGKILL 兜底），不再用 `--parallel`。取舍见
+`knowledge/decisions/2026-10-27-dev-supervisor-and-lock.md`。
 
 ## 身份与会话（实测约束，照抄）
 

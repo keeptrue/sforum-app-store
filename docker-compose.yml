@@ -1,0 +1,109 @@
+# 一条命令起整套商城：bash scripts/docker/bootstrap.sh
+#
+# 单镜像多角色：web / worker / migrate 用的是同一个镜像，只差 command。
+#
+# 缺密钥不会静默降级：compose 用 ${VAR:?...} 直接拒绝启动并提示去跑 bootstrap，
+# 而不是给一个弱默认值让部署「看起来能跑」。五个必填项来自 service/src/lib/config.ts：
+# DATABASE_URL / STORE_PUBLIC_URL / STORE_SESSION_SECRET / STORE_DOWNLOAD_SECRET /
+# STORE_SECRET_KEYS（后三个长度与格式都有校验：secret ≥32 字符，keyring 是 kid:base64(32B)）。
+#
+# 默认走内置 Postgres（与 ci.yml 的 postgres:17-alpine 同镜像）。要接外部库：把 .env 里的
+# DATABASE_URL 改成外部地址即可，db 服务留着不碍事 —— 但 POSTGRES_PASSWORD 仍是必填
+# （db 服务总会被实例化），外部库场景随便填一个非空值即可，不会被使用。
+# 注意外部库的角色需要对库有 CREATE 权限 —— pg-boss 12 默认 createSchema:true，
+# web 与 worker 都会建 pgboss schema。
+
+name: sforum-app-store
+
+x-app: &app
+  image: ${STORE_IMAGE:-ghcr.io/keeptrue/sforum-app-store:edge}
+  # .env 里其余字段（限流、STORE_DOWNLOAD_MODE 等）原样透传；下面 environment 里的
+  # 键优先级更高。
+  env_file:
+    - .env
+  environment:
+    NODE_ENV: production
+    # 内置 db 时 bootstrap 写的是 postgres://store:<pw>@db:5432/store。
+    DATABASE_URL: ${DATABASE_URL:?缺少 DATABASE_URL，请先运行 bash scripts/docker/bootstrap.sh}
+    # 访客真实使用的地址。默认 loopback：production 下非 https 且非 loopback 会被
+    # config.ts 拒绝启动（127.0.0.1 / localhost / ::1 是允许的 http 例外）。
+    # 反向代理或隧道前面挂一层时，这里必须改成对外地址，否则 OAuth 回调、
+    # 下载短链、同源判断全部指回本机。
+    STORE_PUBLIC_URL: ${STORE_PUBLIC_URL:-http://127.0.0.1:4000}
+    STORE_SESSION_SECRET: ${STORE_SESSION_SECRET:?缺少 STORE_SESSION_SECRET，请先运行 bash scripts/docker/bootstrap.sh}
+    STORE_DOWNLOAD_SECRET: ${STORE_DOWNLOAD_SECRET:?缺少 STORE_DOWNLOAD_SECRET，请先运行 bash scripts/docker/bootstrap.sh}
+    STORE_SECRET_KEYS: ${STORE_SECRET_KEYS:?缺少 STORE_SECRET_KEYS，请先运行 bash scripts/docker/bootstrap.sh}
+    # 一次性令牌；留空即关闭首个管理员注册入口（<32 字符会在启动时抛错）。
+    STORE_ADMIN_SETUP_TOKEN: ${STORE_ADMIN_SETUP_TOKEN:-}
+    STORE_ADMIN_PATH: ${STORE_ADMIN_PATH:-admin}
+    # 内容寻址图片存储：命名卷的绝对路径，web 与 worker 共用。
+    STORE_ASSET_DIR: /var/lib/sforum-store/assets
+  restart: unless-stopped
+  depends_on:
+    db:
+      condition: service_healthy
+    migrate:
+      condition: service_completed_successfully
+  volumes:
+    - assets:/var/lib/sforum-store/assets
+
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-store}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?缺少 POSTGRES_PASSWORD，请先运行 bash scripts/docker/bootstrap.sh}
+      POSTGRES_DB: ${POSTGRES_DB:-store}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # -h 127.0.0.1 强制走 TCP：默认的 unix socket 探针会在 initdb 的临时服务窗口里
+      # 先返回一次可用（全新 pgdata 上见过），紧接着 migrate 报
+      # `server closed the connection unexpectedly`。start_period 30s 让 initdb 跑完再计失败。
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U ${POSTGRES_USER:-store} -d ${POSTGRES_DB:-store}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  # 一次性迁移。restart: "no" + web/worker 的 service_completed_successfully 保证
+  # 「迁移先跑完，web 才起来」。
+  #
+  # 升级/重启语义（实测，部署者必须知道）：**每次 `docker compose up -d` 都会重跑一次**
+  # —— compose 会把已 exited(0) 的 migrate 容器重新 start。drizzle 迁移幂等，重跑无副作用；
+  # 换 STORE_IMAGE 时 compose 还会重建这个容器。日志里出现多次 `migrations applied` 是正常的。
+  migrate:
+    <<: *app
+    restart: "no"
+    command: ["bun", "src/db/migrate.ts"]
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      disable: true
+
+  web:
+    <<: *app
+    command: ["bun", "--bun", "next", "start", "-p", "4000", "-H", "0.0.0.0"]
+    ports:
+      # 换端口时地址要跟着变：走 bootstrap 且 .env 里是 loopback 地址时它会自动同步
+      # STORE_PUBLIC_URL；手改 .env 或直接 docker compose 时要两边一起改，否则发出去的
+      # 绝对 URL（OAuth 回调、下载短链）全是旧端口。
+      - "${STORE_HTTP_PORT:-4000}:4000"
+
+  worker:
+    <<: *app
+    command: ["bun", "src/worker.ts"]
+    healthcheck:
+      # 没有 HTTP 面可探。bun 直接作为 PID 1（没加 init），所以看 PID 1 的 cmdline
+      # 就是看 worker 进程本身是否还在。基础镜像没有 curl，但 grep/tr 在。
+      test: ["CMD-SHELL", "tr '\\0' ' ' < /proc/1/cmdline | grep -q 'src/worker.ts'"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+      start_period: 30s
+
+volumes:
+  pgdata:
+  assets:

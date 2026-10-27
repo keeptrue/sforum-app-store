@@ -7,11 +7,22 @@ Status: **实现阶段（S0–S6 完成）**。`service/` 已有 DB 驱动的目
 webhook 验签/幂等、pg-boss worker 与 release 同步/检测。审核台与插件均已落地。
 任务书 `knowledge/plans/2026-10-24-app-store-service.md` 状态为 `active`。
 
+## Docker 一键部署（推荐）
+
+```bash
+git clone https://github.com/keeptrue/sforum-app-store.git && cd sforum-app-store
+bash scripts/docker/bootstrap.sh     # web + worker + 迁移 + 内置 Postgres，生成 .env
+```
+
+镜像来自 GHCR：`ghcr.io/keeptrue/sforum-app-store:edge`（跟随 main）/ semver tag。端口、卷、
+密钥、升级与备份见 [`docs/deployment.md` §3](docs/deployment.md#3-docker-compose-一键部署)。
+
 ## 快速开始（S0/S1）
 
 ```bash
 bun install
 bun run dev          # web + worker，http://127.0.0.1:4000
+bun run dev:stop     # 停 web + worker，清掉 Next dev 锁（--force 强杀）
 bun run build        # Bun 运行时闸门
 bun run start        # web + worker（生产）
 bun run start:web    # 只起 web（多副本 / 排障）

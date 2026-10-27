@@ -6,10 +6,11 @@
     "service"
   ],
   "scripts": {
-    "dev": "bun run --parallel --no-orphans dev:web worker",
+    "dev": "bun run scripts/supervise.ts dev:web worker",
     "dev:web": "bun run --filter service dev",
+    "dev:stop": "bun run scripts/dev-stop.ts",
     "build": "bun run --filter service build",
-    "start": "bun run --parallel --no-orphans start:web worker:prod",
+    "start": "bun run scripts/supervise.ts start:web worker:prod",
     "start:web": "bun run --filter service start",
     "contract:generate": "bun run --filter service contract:generate",
     "manifest:sync": "bun run --filter service manifest:sync",

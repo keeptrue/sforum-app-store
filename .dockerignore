@@ -1,0 +1,57 @@
+# 构建上下文 = 仓库根。这里排除的东西既不上传上下文，也进不了镜像层。
+#
+# .env* 必须在最前面：Bun 1.4.2 会自动加载 cwd 下的 .env / .env.local / .env.production
+# （实测：空 environ 起服务，进程仍读到了 service/.env.local），漏掉这一条就是真实
+# secret 直接进镜像层。Docker 的 ignore 模式按**完整相对路径**匹配，所以 `.env.*` 只盖
+# 根级，嵌套的 service/.env.local 必须靠 `**/.env*` 挡（实测过：只写根级时
+# service/.env.local 会进 build stage 层）。示例文件保留，方便容器内对照字段。
+.env
+.env.*
+**/.env
+**/.env.*
+!.env.example
+!**/.env.example
+!**/.env.test.example
+
+# 依赖与构建产物：镜像里由 bun install / next build 重新生成。
+# Bun workspace 的真实包在根 node_modules/.bun 下，service/node_modules 只是软链。
+node_modules/
+**/node_modules/
+.bun/
+.next/
+**/.next/
+*.tsbuildinfo
+dist/
+.turbo/
+.eslintcache
+
+# 运行时数据与本地草稿
+tmp/
+**/tmp/
+logs/
+coverage/
+playwright-report/
+test-results/
+service/.data/
+.drizzle/
+
+# service 镜像用不到的东西：插件包、知识库、文档、契约与宿主检出。
+# （契约生成的 service/src/lib/api-types.ts 已入库，构建不需要 contracts/。）
+plugin/
+knowledge/
+docs/
+contracts/
+SForum/
+
+# VCS 与编辑器
+.git/
+.gitignore
+.github/
+.idea/
+.vscode/
+.DS_Store
+tun2.html
+
+# 包体：仓库永不存 ZIP/TAR，也别让它们进上下文
+*.zip
+*.tar.gz
