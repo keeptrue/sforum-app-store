@@ -46,6 +46,10 @@ export type AuthSnapshot = {
   /** 等待授权时显示的短码，和商城授权页上的那一串对照。 */
   code: string;
   message: string;
+  /** 等待期间连续重试了几次（临时失败不清零，成功一拍才清零）。 */
+  retries: number;
+  /** 最近一次临时失败的短因（HTTP 状态或错误码），用来在连接条上说清楚。 */
+  lastFailure: string;
 };
 
 /**
@@ -90,6 +94,8 @@ function emptySnapshot(): AuthSnapshot {
     expiresAt: null,
     code: "",
     message: "",
+    retries: 0,
+    lastFailure: "",
   };
 }
 
@@ -184,8 +190,12 @@ function failureOf(error: unknown): { code: string; status: number; detail: stri
  * 以及任何 4xx —— 重试不会变。
  */
 export function isTransientPollFailure(code: string, status: number): boolean {
-  // 确定性失败优先：`secret_write_failed` 也是 5xx，但重试一万次也写不进去。
+  // 确定性失败优先：`secret_write_failed` 也是 5xx，但重试一万次也写不进去；
+  // `request_unknown` 说明插件重启过、verifier 已经没了。
   if (code === "request_unknown" || code === "secret_write_failed") return false;
+  // 宿主级 404（信封里没有插件的字符串码）= 路由此刻没注册上 —— 插件正在重新装配。
+  // 这正是「等一会儿就好」的那一类，不能当终局。插件自己的 404 一定带字符串码。
+  if (status === 404 && code === "") return true;
   if (status === 0 || status === 429 || status >= 500) return true;
   return code === "upstream_error" || code === "slow_down";
 }
@@ -280,7 +290,11 @@ export function createAuthController(deps: AuthDeps): AuthController {
       return copy.t("authConnectedAs", { who, expiry });
     }
     if (state.phase === "waiting") {
-      return copy.t("authWaiting", { code: state.code });
+      const base = copy.t("authWaiting", { code: state.code });
+      // 静默重试等于「卡住了但不说」：把次数与最近一次原因写出来，操作者和我都能定位。
+      return state.retries > 0
+        ? `${base} ${copy.t("authRetrying", { count: state.retries, reason: state.lastFailure })}`
+        : base;
     }
     if (state.phase === "connecting") return copy.t("authConnecting");
     if (state.phase === "error") return state.message || copy.t("authFailed");
@@ -424,6 +438,12 @@ export function createAuthController(deps: AuthDeps): AuthController {
       // （请求已失效、secret 写不进去）才终止。
       const { code, status } = failureOf(error);
       if (isTransientPollFailure(code, status) && now() <= deadline) {
+        state = {
+          ...state,
+          retries: state.retries + 1,
+          lastFailure: code || (status ? `HTTP ${status}` : "network"),
+        };
+        emit();
         schedulePoll();
         return;
       }
@@ -435,6 +455,10 @@ export function createAuthController(deps: AuthDeps): AuthController {
 
     const status = readString(payload?.status);
     if (status === "pending") {
+      if (state.retries > 0) {
+        state = { ...state, retries: 0, lastFailure: "" };
+        emit();
+      }
       schedulePoll();
       return;
     }

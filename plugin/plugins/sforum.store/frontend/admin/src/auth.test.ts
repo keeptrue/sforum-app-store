@@ -13,6 +13,7 @@ import {
   AUTH_STATUS_PATH,
   authErrorMessage,
   createAuthController,
+  isTransientPollFailure,
   shortCode,
 } from "./auth";
 import { createCopy } from "./copy";
@@ -211,6 +212,13 @@ describe("connect flow", () => {
     expect(h.controller.snapshot().phase).toBe("waiting");
     await h.advance(2_000);
     expect(h.controller.snapshot().phase).toBe("connected");
+  });
+
+  test("a host 404 (route not registered yet) is retried, not fatal", () => {
+    // 插件重新装配的那几秒里，宿主对插件路由回 404 且信封里没有插件的字符串码。
+    expect(isTransientPollFailure("", 404)).toBe(true);
+    // 插件自己的 404 一定带码，那是「这次请求没了」，不能重试。
+    expect(isTransientPollFailure("request_unknown", 404)).toBe(false);
   });
 
   test("a definitive failure still stops the poll", async () => {
