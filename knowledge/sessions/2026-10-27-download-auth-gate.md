@@ -48,7 +48,9 @@
 10. 审计出现 `auth.install_request.approved` / `auth.install_token.issued` /
     `auth.install_token.revoked` / `download.issued`，**明文令牌在审计里 0 条**；
 11. **重启**（`bun run dev:stop` + `bun run dev`）后同一令牌仍能签发 → 200（持久化，不是内存）；
-12. 回滚：切回 `anonymous` → 匿名 200、无效令牌被忽略（200）。
+12. 回滚：切回 `anonymous` → 匿名 200、无效令牌被忽略（200）；
+13. **断开后重新连接**：撤销第一个令牌 → 401；再走一遍授权 → 拿到**不同**的新令牌 → 签发 200。
+    （dev 库里 7 条令牌行：5 条已撤销；收尾把测试留下的 2 条也撤销了，live = 0。）
 
 ### 两个在 E2E 里抓到的真问题
 
