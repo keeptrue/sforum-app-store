@@ -104,7 +104,7 @@
   "openapi": [
     {
       "contractVersion": "sforum.store.openapi.routes@1",
-      "digest": "e6fe7ae996f382fd5654442dc33e564053ff767c27015085bcdf0b1bad70f73e",
+      "digest": "ca52ea4c12fadb024e6313fb3c1837ac3b1532491a64aea6b333f7fb2810d2a0",
       "id": "sforum.store.file.openapi-routes",
       "namespace": "sforum.store.api",
       "path": "openapi/routes.yaml"
@@ -172,7 +172,7 @@
       "version": "1"
     },
     {
-      "digest": "e6fe7ae996f382fd5654442dc33e564053ff767c27015085bcdf0b1bad70f73e",
+      "digest": "ca52ea4c12fadb024e6313fb3c1837ac3b1532491a64aea6b333f7fb2810d2a0",
       "id": "sforum.store.file.openapi-routes",
       "kind": "openapi",
       "path": "openapi/routes.yaml"
@@ -185,7 +185,7 @@
       "version": "1"
     },
     {
-      "digest": "f8ab86a9b069b818173d8a9182268d0dbd911398315ebb4f7d13bd623531a645",
+      "digest": "8d8ae0b5da6d3c6710b170c73e08a02107cf78721f78901b7ff58d03ae321592",
       "id": "sforum.store.auth-status.response",
       "kind": "schema",
       "path": "schemas/auth-status.response.json",
@@ -206,7 +206,7 @@
       "version": "1"
     },
     {
-      "digest": "a75066852ca37be4c5ceba5567b17d6e43c2d4507d330413d7fadb736674d599",
+      "digest": "8619fda1a125128dd09fb6dc53df3368c5d8301a23b987ea037974c89d3f4893",
       "id": "sforum.store.auth-poll.response",
       "kind": "schema",
       "path": "schemas/auth-poll.response.json",

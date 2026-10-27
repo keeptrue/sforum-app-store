@@ -5,42 +5,84 @@
     {
       "type": "object",
       "additionalProperties": false,
-      "required": ["status", "account", "expiresAt"],
+      "required": [
+        "status",
+        "account",
+        "expiresAt"
+      ],
       "properties": {
         "status": {
           "type": "string",
-          "enum": ["pending", "connected", "denied", "expired", "consumed"]
+          "enum": [
+            "pending",
+            "connected",
+            "denied",
+            "expired",
+            "consumed"
+          ]
         },
         "account": {
-          "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/account" }]
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "id",
+                "issuerKey",
+                "username",
+                "displayName",
+                "avatarUrl"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "issuerKey": {
+                  "type": "string"
+                },
+                "username": {
+                  "type": "string"
+                },
+                "displayName": {
+                  "type": "string"
+                },
+                "avatarUrl": {
+                  "type": "string"
+                }
+              }
+            }
+          ]
         },
         "expiresAt": {
-          "oneOf": [{ "type": "null" }, { "type": "string" }]
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ]
         }
       }
     },
     {
       "type": "object",
       "additionalProperties": false,
-      "required": ["code", "message"],
+      "required": [
+        "code",
+        "message"
+      ],
       "properties": {
-        "code": { "type": "string" },
-        "message": { "type": "string" }
+        "code": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        }
       }
     }
-  ],
-  "$defs": {
-    "account": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["id", "issuerKey", "username", "displayName", "avatarUrl"],
-      "properties": {
-        "id": { "type": "string" },
-        "issuerKey": { "type": "string" },
-        "username": { "type": "string" },
-        "displayName": { "type": "string" },
-        "avatarUrl": { "type": "string" }
-      }
-    }
-  }
+  ]
 }

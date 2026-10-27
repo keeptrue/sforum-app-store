@@ -91,9 +91,7 @@ paths:
               schema:
                 $ref: '../schemas/install-url.response.json'
         "401":
-          description: |
-            商城要求登录（account_required）且本地没有可用令牌，或令牌已被撤销/过期/账号停用。
-            插件会清掉本地凭据并把 code 设为 login_required，页面据此回到「连接商城」。
+          description: 商城要求登录（account_required）且本地没有可用令牌，或令牌已被撤销/过期/账号停用。 插件会清掉本地凭据并把 code 设为 login_required，页面据此回到「连接商城」。
           content:
             application/json:
               schema:
@@ -156,8 +154,7 @@ paths:
               schema:
                 $ref: '../schemas/auth-start.response.json'
         default:
-          description: |
-            错误文档（not_configured / auth_unsupported / auth_not_required / upstream_error）
+          description: 错误文档（not_configured / auth_unsupported / auth_not_required / upstream_error）
           content:
             application/json:
               schema:
@@ -190,8 +187,7 @@ paths:
               schema:
                 $ref: '../schemas/auth-poll.response.json'
         default:
-          description: |
-            错误文档（invalid_request / request_unknown / secret_write_failed / upstream_error）
+          description: 错误文档（invalid_request / request_unknown / secret_write_failed / upstream_error）
           content:
             application/json:
               schema:
