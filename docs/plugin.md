@@ -222,3 +222,8 @@ go run ./cmd/sforum extension test <pkg>
 go run ./cmd/sforum extension brand check <pkg>
 go run ./cmd/sforum extension package <pkg> --exclude-source -o /tmp/sforum.store.zip
 ```
+
+推 `v*` tag 时 `.github/workflows/release.yml` 会自动跑上面四道闸，并按
+`linux/amd64`、`linux/arm64`、`darwin/arm64`、`darwin/amd64` 四个平台重建后端、刷新摘要、
+打包，把 ZIP、SBOM 与 `SHA256SUMS` 挂到该 tag 的 GitHub Release。标签版本必须与
+`sforum.extension.json` 的 `version` 一致。

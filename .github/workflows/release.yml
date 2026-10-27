@@ -1,0 +1,229 @@
+name: release
+
+# 推 v* 标签即发布：四个平台各自构建后端二进制、刷新摘要、打成 SForum 包，
+# 全部校验通过后挂到同一个 GitHub Release。商城服务端的镜像由 docker.yml 负责
+# （同一个 tag 触发），本工作流只产出插件包与 Release。
+#
+# workflow_dispatch 只做校验与构建，不创建 Release（publish 只在 tag 上跑）。
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      sforum_ref:
+        description: 构建所使用的 SForum 引用（tag / 分支 / commit）
+        required: false
+        default: 600fa68e6bcd15f97a5bbaea98b4dfd46f71ae33
+
+# 默认只读；发布 job 单独要 contents: write。
+permissions:
+  contents: read
+
+env:
+  SFORUM_REPOSITORY: keeptrue/SForum
+  # 与 ci.yml 同一个 pin：v3.0.19 的 release commit，带 SecretService.Put/Clear。
+  # 清单的 sforumVersion 是 >=3.0.19，两者必须同批移动。
+  SFORUM_REF: ${{ github.event.inputs.sforum_ref || '600fa68e6bcd15f97a5bbaea98b4dfd46f71ae33' }}
+  PACKAGE_DIR: plugin/plugins/sforum.store
+  PACKAGE_SLUG: sforum.store
+
+# 同一个 ref 的发布串行；tag 发布不取消，避免半个 Release。
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: repo
+
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ env.SFORUM_REPOSITORY }}
+          ref: ${{ env.SFORUM_REF }}
+          path: sforum
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: repo/${{ env.PACKAGE_DIR }}/backend/go.mod
+          cache-dependency-path: repo/${{ env.PACKAGE_DIR }}/backend/go.sum
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+
+      # 本仓的 replace 指向本地兄弟布局；CI 的 checkout 深度不同，统一覆盖成绝对路径。
+      - name: Point the SDK at the SForum checkout
+        working-directory: repo/${{ env.PACKAGE_DIR }}/backend
+        run: go mod edit -replace github.com/keeptrue/sforum/apps/api="$GITHUB_WORKSPACE/sforum/apps/api"
+
+      - name: Backend vet and unit tests
+        working-directory: repo/${{ env.PACKAGE_DIR }}/backend
+        run: |
+          go vet ./...
+          go test ./...
+
+      - name: Admin page tests
+        working-directory: repo
+        run: bun test plugin/plugins/sforum.store/frontend/admin/src
+
+      # 与 ci.yml 同一条闸：从源码重建二进制与管理页，摘要必须与仓库里的清单逐字节一致。
+      # 发布包随后会按平台重写摘要，但 tag 指向的提交本身必须先自洽。
+      - name: Build package from source and assert digests are reproducible
+        working-directory: repo
+        run: |
+          bash plugin/scripts/build.sh
+          git diff --exit-code -- plugin/plugins/sforum.store/sforum.extension.json
+
+      - name: Verify tag matches manifest version
+        if: startsWith(github.ref, 'refs/tags/v')
+        working-directory: repo
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          MANIFEST_VERSION="$(python3 -c "import json;print(json.load(open('$PACKAGE_DIR/sforum.extension.json'))['version'])")"
+          echo "tag=$TAG_VERSION manifest=$MANIFEST_VERSION"
+          if [ "$TAG_VERSION" != "$MANIFEST_VERSION" ]; then
+            echo "::error title=版本不一致::标签 v$TAG_VERSION 与 sforum.extension.json 的 version ($MANIFEST_VERSION) 不一致。"
+            exit 1
+          fi
+
+      - name: Run host gates
+        working-directory: repo
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE/sforum/apps/api"
+          go run ./cmd/sforum extension digest --write "$GITHUB_WORKSPACE/repo/$PACKAGE_DIR"
+          go run ./cmd/sforum extension validate "$GITHUB_WORKSPACE/repo/$PACKAGE_DIR"
+          go run ./cmd/sforum extension test "$GITHUB_WORKSPACE/repo/$PACKAGE_DIR"
+          go run ./cmd/sforum extension brand check "$GITHUB_WORKSPACE/repo/$PACKAGE_DIR"
+
+  build:
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { goos: linux, goarch: amd64 }
+          - { goos: linux, goarch: arm64 }
+          - { goos: darwin, goarch: arm64 }
+          - { goos: darwin, goarch: amd64 }
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: repo
+
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ env.SFORUM_REPOSITORY }}
+          ref: ${{ env.SFORUM_REF }}
+          path: sforum
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: repo/${{ env.PACKAGE_DIR }}/backend/go.mod
+          cache-dependency-path: repo/${{ env.PACKAGE_DIR }}/backend/go.sum
+
+      - name: Point the SDK at the SForum checkout
+        working-directory: repo/${{ env.PACKAGE_DIR }}/backend
+        run: go mod edit -replace github.com/keeptrue/sforum/apps/api="$GITHUB_WORKSPACE/sforum/apps/api"
+
+      - name: Build ${{ matrix.goos }}/${{ matrix.goarch }} package
+        id: package
+        run: |
+          set -euo pipefail
+          STAGE="$GITHUB_WORKSPACE/stage"
+          rm -rf "$STAGE"; mkdir -p "$STAGE"
+          # 只把运行时需要的文件放进 stage；Go 源码与旧二进制由 rsync + --exclude-source 双层挡掉。
+          rsync -a \
+            --exclude '/backend/*.go' --exclude '/backend/go.mod' --exclude '/backend/go.sum' \
+            --exclude '/backend/plugin' --exclude '/backend/plugin.exe' \
+            "$GITHUB_WORKSPACE/repo/$PACKAGE_DIR/" "$STAGE/"
+
+          (cd "$GITHUB_WORKSPACE/repo/$PACKAGE_DIR/backend" && \
+            CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
+            go build -trimpath -ldflags "-s -w" -o "$STAGE/backend/plugin" ./)
+
+          VERSION="$(python3 -c "import json;print(json.load(open('$GITHUB_WORKSPACE/repo/$PACKAGE_DIR/sforum.extension.json'))['version'])")"
+          ASSET="${PACKAGE_SLUG}_${VERSION}_${{ matrix.goos }}_${{ matrix.goarch }}"
+          echo "asset=$ASSET" >> "$GITHUB_OUTPUT"
+
+          mkdir -p "$GITHUB_WORKSPACE/dist"
+          cd "$GITHUB_WORKSPACE/sforum/apps/api"
+          # 每个平台的二进制不同，摘要必须按该平台重新写入后再打包。
+          go run ./cmd/sforum extension digest --write "$STAGE"
+          go run ./cmd/sforum extension validate "$STAGE"
+          go run ./cmd/sforum extension brand check "$STAGE"
+          go run ./cmd/sforum extension package "$STAGE" --exclude-source -o "$GITHUB_WORKSPACE/dist/$ASSET.zip"
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.package.outputs.asset }}
+          path: |
+            dist/*.zip
+            dist/*.zip.sbom.json
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all package artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Compute checksums
+        working-directory: dist
+        run: sha256sum *.zip | tee SHA256SUMS
+
+      - name: Create or update release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#v}"
+          MINOR="${VERSION%.*}"
+          {
+            echo '## 安装'
+            echo
+            echo '1. 下载与服务器平台匹配的压缩包（`linux_amd64` / `linux_arm64` / `darwin_arm64` / `darwin_amd64`）。'
+            echo '2. 装到 SForum：后台「扩展 → 安装」上传 zip，或填 zip 的公网 HTTPS 地址 + `SHA256SUMS` 里的摘要；也可以解压到某个外部源根的 `plugins/sforum.store/`（即本仓库的目录布局）。'
+            echo '3. 启用 **应用商城**；带后端的包仍需 super_admin 的一次性 exact-artifact 信任确认。'
+            echo
+            echo '每个 zip 内的清单摘要与其中的 `backend/plugin` 一一对应，跨平台包不可混用；校验：`sha256sum -c SHA256SUMS`。'
+            echo
+            echo '## 兼容性'
+            echo
+            echo 'Manifest V3 + Host Protocol V2，要求 SForum `>=3.0.19`。'
+            echo
+            echo '## 商城服务端'
+            echo
+            if [[ "$VERSION" == *-* ]]; then
+              echo "同一 tag 的镜像由 docker workflow 构建：\`ghcr.io/keeptrue/sforum-app-store:${VERSION}\`（预发布：不打 \`${MINOR}\` 与 \`latest\`）。"
+            else
+              echo "同一 tag 的镜像由 docker workflow 构建：\`ghcr.io/keeptrue/sforum-app-store:${VERSION}\`（同时打 \`${MINOR}\` 与 \`latest\`）。"
+            fi
+          } > notes.md
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --title "$TAG" --notes-file notes.md
+            gh release upload "$TAG" dist/* --clobber
+          else
+            gh release create "$TAG" --title "$TAG" --notes-file notes.md dist/*
+          fi
+          gh release view "$TAG" --json assets --jq '.assets[].name'

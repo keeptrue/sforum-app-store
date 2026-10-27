@@ -549,6 +549,11 @@ docker run --rm -v "$ASSETS_VOL:/data" -v "$PWD:/backup" postgres:17-alpine tar 
 
 - 触发：push `main`、push `v*` tag、`pull_request`、`workflow_dispatch`。**`v*` 触发不等于会被
   构建**：tag 必须是 semver，否则 `verify-tag` 直接失败（§4.1）。
+- 推送 `v*` 还会触发 `release.yml`：按 `linux/amd64`、`linux/arm64`、`darwin/arm64`、
+  `darwin/amd64` 四个平台重建插件后端、刷新摘要、跑宿主闸并打包，把 ZIP、SBOM 与
+  `SHA256SUMS` 挂到该 tag 的 GitHub Release。`workflow_dispatch` 只做校验与构建，不创建
+  Release。标签版本必须与 `plugin/plugins/sforum.store/sforum.extension.json` 的 `version`
+  一致，否则 verify 直接失败。
 - 同一 ref 的构建串行（`concurrency: docker-<ref>`）：PR 允许取消前一次，`main` 与 tag 不取消，
   保证 tag 一定出镜像。
 - 平台：推送时 `linux/amd64,linux/arm64`（arm64 走 QEMU 交叉构建）；PR 只构 `linux/amd64` 且不推送。
