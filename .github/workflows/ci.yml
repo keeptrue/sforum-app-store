@@ -34,6 +34,9 @@ jobs:
       - name: Install
         run: bun install --frozen-lockfile
 
+      - name: Test (dev tooling)
+        run: bun test scripts/
+
       - name: Contract drift
         run: |
           bun run contract:generate
@@ -74,20 +77,22 @@ jobs:
       # against. Always a full 40-char SHA: a short SHA is not a valid fetch refspec, and
       # a tag can be force-moved, which would silently build a different core.
       #
-      # This pin is the module-path rename commit (zhuchunshu -> keeptrue), not a release
-      # tag: from it on `apps/api/go.mod` declares `module github.com/keeptrue/sforum/apps/api`
-      # and the plugin's `require` follows that path. An earlier tag such as v3.0.18 still
-      # declares the old module path, so the replace below would resolve to a package that
-      # declares a different path and the build fails before compiling anything — being on
-      # the same history does not make it usable.
-      # Constraint: actions/checkout fetches by SHA and only sees commits that exist on the
-      # remote. Satisfied — the commit is already pushed; d1153068c has it as its parent.
+      # This pin is the v3.0.19 release commit: it carries `SecretService.Put/Clear`, which
+      # the store plugin's "connect store" flow writes the account token through. The
+      # manifest's `sforumVersion` (`>=3.0.19`) and this ref must move together — a plugin
+      # built against an older core compiles (the RPC is additive) but the write fails at
+      # runtime with `host_api_unsupported`-class errors, and a manifest that demands 3.0.19
+      # on an older core is refused at install time.
+      #
+      # Module path note: `apps/api/go.mod` declares `github.com/keeptrue/sforum/apps/api`
+      # (renamed from zhuchunshu in e753c72b0); tags before that rename still declare the
+      # old path and cannot resolve this `replace`.
       - name: Checkout SForum (SDK)
         uses: actions/checkout@v4
         with:
           repository: keeptrue/SForum
           path: SForum
-          ref: e753c72b06e45da50d25326c049c51312f887046 # 模块路径改名提交，非 release tag
+          ref: 600fa68e6bcd15f97a5bbaea98b4dfd46f71ae33 # v3.0.19：带 SecretService.Put/Clear
 
       - uses: actions/setup-go@v5
         with:
