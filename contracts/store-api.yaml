@@ -105,6 +105,18 @@ paths:
           schema:
             type: string
             enum: [plugin, theme]
+        - name: extensionIds
+          in: query
+          description: |
+            按扩展 ID 批量过滤，逗号分隔，最多 200 个（按去重后的数量算）。用于客户端
+            一次问清「我装过的这些扩展里哪些有更新」：响应只包含命中集合内的产品，
+            未知 ID 直接忽略，不影响其余结果。
+
+            空项与重复项由服务端去掉；省略、或全部为空表示不过滤。任一 ID 不符合
+            `^[a-z0-9][a-z0-9._-]{0,159}$`、或去重后超过 200 个时返回 400
+            `invalid_query`——拼错的 ID 会悄悄变成「没有更新」，所以宁可报错。
+          schema:
+            type: string
         - name: cursor
           in: query
           schema:
@@ -199,6 +211,162 @@ paths:
                 $ref: "#/components/schemas/ReleaseVersion"
         "404":
           $ref: "#/components/responses/NotFound"
+  /v1/auth/mode:
+    get:
+      tags: [distribution]
+      operationId: getAuthMode
+      summary: 下载签发是否要求登录
+      description: |
+        匿名。插件在显示「连接商城」之前先问这一条；旧商城没有这个路由（404）时按
+        `anonymous` 处理，安装照旧匿名。响应 `no-store`。
+      responses:
+        "200":
+          description: The gate in effect.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthMode"
+  /v1/auth/requests:
+    post:
+      tags: [distribution]
+      operationId: createAuthRequest
+      summary: 发起一次「连接商城」授权请求
+      description: |
+        匿名（调用方还没有凭据，凭据正是这条流程的产物）。`code_challenge` 是 S256
+        PKCE challenge；verifier 只留在插件后端。返回的 `authorize_url` 用生效的对外地址
+        拼成，插件必须校验它的 origin 与自身配置的商城地址一致后再导航。
+
+        没有可用 issuer 时返回 503 `issuer_unavailable`：授权页无从登录，不如直接说清楚。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InstallAuthRequestCreate"
+      responses:
+        "200":
+          description: The request id and where to send the operator.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InstallAuthRequestCreated"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "503":
+          description: 商城没有可用的论坛 issuer（后台未配置或已停用）。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /v1/auth/requests/{id}:
+    get:
+      tags: [distribution]
+      operationId: getAuthRequestStatus
+      summary: 轮询授权状态
+      description: |
+        只返回 `status`，不泄露账号、标签或时间。插件按响应里的 `interval` 轮询；
+        `approved` 之后立即兑换，不要重复轮询。
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Current state.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InstallAuthRequestStatus"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /v1/auth/requests/{id}/token:
+    post:
+      tags: [distribution]
+      operationId: exchangeAuthRequest
+      summary: 用 verifier 兑换账号令牌（一次性）
+      description: |
+        校验 PKCE 之后在事务里消费请求，所以同一个请求只能兑换一次：重放返回 409
+        `request_already_used`。verifier 不匹配返回 400 `pkce_mismatch`，且**不消耗**请求，
+        调用方可以改正后重试。
+
+        响应里是唯一一次出现的明文令牌。调用方必须立刻写入宿主的加密 secret 设置，
+        不得落日志、不得进审计。
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InstallAuthTokenExchange"
+      responses:
+        "200":
+          description: The account token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InstallAuthToken"
+        "400":
+          description: |
+            `invalid_request`（body 形状）、`invalid_verifier`（长度/字符集）、
+            `pkce_mismatch`（challenge 对不上，请求仍可用）。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: |
+            请求存在但不可兑换：`request_denied` / `request_not_approved` /
+            `request_already_used`。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "410":
+          description: 请求已过期（`request_expired`）。回论坛重新发起。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /v1/auth/me:
+    get:
+      tags: [distribution]
+      operationId: getAuthAccount
+      summary: 当前令牌对应的账号
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Who this token belongs to.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InstallAuthMe"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /v1/auth/revoke:
+    post:
+      tags: [distribution]
+      operationId: revokeAuthToken
+      summary: 断开连接（撤销当前令牌）
+      description: |
+        幂等：已过期、已撤销、不存在的令牌同样返回 204。插件「断开连接」先调这里（尽力），
+        再清宿主里的 secret。
+      security:
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Revoked (or already unusable).
   /v1/download-urls:
     post:
       tags: [distribution]
@@ -220,6 +388,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/DownloadUrlResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
         "404":
           description: |
             产品不可见、版本不存在或该平台没有资产。稳定错误码：
@@ -248,7 +418,10 @@ paths:
             type: string
       responses:
         "302":
-          description: Redirect to a signed download URL.
+          description: |
+            有会话（或 `download_auth_mode=anonymous`）时 302 到签名下载地址；
+            `account_required` 且没有商城会话时 302 到
+            `/api/auth/sforum/start?redirect=<本路径>`，登录回调 303 回本路径。
           headers:
             Location:
               schema:
@@ -319,6 +492,15 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: |
+        商城账号令牌（`sfo_…`，30 天，scope `download:issue`）。由插件后端在
+        `/connect/{id}` 授权后经 `POST /v1/auth/requests/{id}/token` 一次性兑换取得，
+        之后只存在于宿主加密的 secret 设置里。令牌是**论坛级**：同一论坛的所有管理员共用，
+        审计记「哪个商城账号授权了这台论坛」，不记「哪个管理员点了安装」。
   parameters:
     Slug:
       name: slug
@@ -328,6 +510,15 @@ components:
         type: string
         pattern: "^[a-z0-9][a-z0-9-]{1,63}$"
   responses:
+    Unauthorized:
+      description: |
+        缺少或不可用的账号令牌。稳定错误码：`login_required`（没有令牌/结构不合法）、
+        `token_expired`、`token_revoked`、`account_disabled`、`insufficient_scope`。
+        插件按这五个码决定「去连接」还是「重新连接」。
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
     BadRequest:
       description: Invalid query or body.
       content:
@@ -384,6 +575,15 @@ components:
           description: Whether cookies are issued with `Secure` and the `__Host-` prefix.
         nodeEnv:
           type: string
+        downloadAuthMode:
+          type: string
+          enum: [anonymous, account_required]
+          description: |
+            下载签发是否要求商城账号。`anonymous` 是默认：已发布即可安装。切到
+            `account_required` 之后，未升级的旧插件会在 `/v1/download-urls` 收到 401。
+        downloadAuthModeSource:
+          type: string
+          enum: [database, env]
         configError:
           type: string
           description: |
@@ -736,9 +936,118 @@ components:
           description: |
             本次实际生效的兼容过滤口径：显式传入的值，或按宿主构建推出的默认值。可选——
             旧服务端不返回该字段，旧客户端忽略它。
+    AuthMode:
+      type: object
+      required: [mode, token_ttl_seconds]
+      properties:
+        mode:
+          type: string
+          enum: [anonymous, account_required]
+        token_ttl_seconds:
+          type: integer
+          description: 新令牌的有效期（30 天），供插件显示「何时需要重新连接」。
+    InstallAuthRequestCreate:
+      type: object
+      required: [code_challenge]
+      properties:
+        code_challenge:
+          type: string
+          pattern: "^[A-Za-z0-9_-]{43}$"
+          description: S256 PKCE challenge（base64url 无填充）。verifier 不出插件后端。
+        client_label:
+          type: string
+          maxLength: 64
+          description: 插件上报的展示名，不可信，授权页按纯文本渲染。
+    InstallAuthRequestCreated:
+      type: object
+      required: [id, authorize_url, expires_in, interval]
+      properties:
+        id:
+          type: string
+          format: uuid
+        authorize_url:
+          type: string
+          format: uri
+          description: 用生效的对外地址拼成；插件必须校验 origin 后导航。
+        expires_in:
+          type: integer
+          description: 授权请求的有效期（300 秒）。
+        interval:
+          type: integer
+          description: 建议轮询间隔（2 秒）。
+    InstallAuthRequestStatus:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [pending, approved, denied, consumed, expired]
+    InstallAuthTokenExchange:
+      type: object
+      required: [code_verifier]
+      properties:
+        code_verifier:
+          type: string
+          minLength: 43
+          maxLength: 128
+    InstallAccount:
+      type: object
+      required: [id, issuerKey, username, displayName, avatarUrl]
+      properties:
+        id:
+          type: string
+          format: uuid
+        issuerKey:
+          type: string
+        username:
+          type: string
+          nullable: true
+        displayName:
+          type: string
+          nullable: true
+        avatarUrl:
+          type: string
+          nullable: true
+    InstallAuthToken:
+      type: object
+      required: [access_token, token_type, expires_in, expires_at, scope, account]
+      properties:
+        access_token:
+          type: string
+          description: |
+            `sfo_` + 43 字符。只在本响应里出现一次；调用方必须写入宿主加密 secret，
+            不得落日志或审计。
+        token_type:
+          type: string
+          const: Bearer
+        expires_in:
+          type: integer
+        expires_at:
+          type: string
+          format: date-time
+        scope:
+          type: string
+          const: download:issue
+        account:
+          $ref: "#/components/schemas/InstallAccount"
+    InstallAuthMe:
+      type: object
+      required: [account, expires_at, scope]
+      properties:
+        account:
+          $ref: "#/components/schemas/InstallAccount"
+        expires_at:
+          type: string
+          format: date-time
+        scope:
+          type: string
     DownloadUrlRequest:
       type: object
       required: [product, os, arch]
+      description: |
+        `download_auth_mode=account_required` 时本请求必须带 `Authorization: Bearer <token>`；
+        `anonymous` 时令牌可有可无（带了就校验并审计，无效令牌忽略）。签发是账号级，
+        但签发出来的签名 URL 仍是 30 分钟的 bearer。
       properties:
         product:
           type: string

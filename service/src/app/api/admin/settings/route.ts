@@ -61,6 +61,7 @@ export async function PUT(request: Request) {
         publicUrl: stringField(body, "publicUrl", { required: true, max: 500 }),
         downloadTtlSeconds: body.downloadTtlSeconds,
         downloadMode: body.downloadMode,
+        downloadAuthMode: body.downloadAuthMode,
         rateLimits: body.rateLimits,
         confirmOriginChange: body.confirmOriginChange === true,
         confirmInsecureTransition: body.confirmInsecureTransition === true,

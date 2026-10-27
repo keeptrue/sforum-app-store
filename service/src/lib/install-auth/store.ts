@@ -217,20 +217,6 @@ export async function revokeAccountToken(
     .where(and(eq(accountTokens.id, id), isNull(accountTokens.revokedAt)));
 }
 
-/** Admin console: every live token for one account (used by the revoke-all action). */
-export async function revokeAccountTokensForAccount(
-  db: Db,
-  accountId: string,
-  now: Date,
-): Promise<number> {
-  const revoked = await db
-    .update(accountTokens)
-    .set({ revokedAt: now })
-    .where(and(eq(accountTokens.accountId, accountId), isNull(accountTokens.revokedAt)))
-    .returning({ id: accountTokens.id });
-  return revoked.length;
-}
-
 /** The account behind a request, for the exchange response. */
 export async function findAccountById(
   db: Db,

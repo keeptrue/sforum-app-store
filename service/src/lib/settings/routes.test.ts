@@ -6,6 +6,7 @@ import { storeSettings } from "@/db/schema";
 import { registerFirstAdmin } from "@/lib/admin/setup";
 import { createAdminSession } from "@/lib/admin/session";
 import { getConfig, resetConfigForTests, type StoreConfig } from "@/lib/config";
+import { RATE_LIMIT_CHANNELS } from "@/lib/ratelimit/rules";
 import { resetRuntimeConfigForTests } from "@/lib/settings/runtime";
 import { TRUNCATE_ALL } from "@/lib/test-support/db";
 
@@ -119,11 +120,20 @@ describe("GET /api/admin/settings", () => {
     const response = await route.GET(request());
     expect(response.status).toBe(200);
     const payload = (await response.json()) as {
-      settings: { publicUrl: string; publicUrlSource: string; rateLimits: unknown[] };
+      settings: {
+        publicUrl: string;
+        publicUrlSource: string;
+        downloadAuthMode: string;
+        downloadAuthModeSource: string;
+        rateLimits: unknown[];
+      };
     };
     expect(payload.settings.publicUrl).toBe(PUBLIC_URL);
     expect(payload.settings.publicUrlSource).toBe("env");
-    expect(payload.settings.rateLimits.length).toBe(6);
+    // The view must cover every channel the limiter knows about, not a frozen count.
+    expect(payload.settings.rateLimits.length).toBe(RATE_LIMIT_CHANNELS.length);
+    expect(payload.settings.downloadAuthMode).toBe("anonymous");
+    expect(payload.settings.downloadAuthModeSource).toBe("env");
   });
 });
 

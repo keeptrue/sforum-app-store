@@ -1,5 +1,6 @@
 import { getDb } from "@/db/client";
 import { requestIp } from "@/lib/auth/http";
+import { enforceTokenLimit } from "@/lib/install-auth/limits";
 import { exchangeAuthRequest } from "@/lib/install-auth/service";
 
 export const runtime = "nodejs";
@@ -37,7 +38,11 @@ export async function POST(
     return errorResponse(400, "invalid_request");
   }
 
-  const result = await exchangeAuthRequest(getDb(), id, body.code_verifier, {
+  const db = getDb();
+  const limited = await enforceTokenLimit(db, id);
+  if (limited) return limited;
+
+  const result = await exchangeAuthRequest(db, id, body.code_verifier, {
     ip: requestIp(request),
     userAgent: request.headers.get("user-agent"),
   });

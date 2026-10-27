@@ -38,6 +38,10 @@ const CHANNEL_LABELS: Record<string, string> = {
   submit: "开发者提交（按账号）",
   "download-ip": "下载（按 IP）",
   "download-token": "下载（按 token）",
+  "download-account": "下载（按商城账号）",
+  "install-auth-start": "连接商城：发起授权（按 IP）",
+  "install-auth-poll": "连接商城：轮询状态（按请求）",
+  "install-auth-token": "连接商城：兑换令牌（按请求）",
   repo: "连接仓库（按账号）",
 };
 
@@ -59,6 +63,10 @@ function sourceBadge(source: StoreSettingsView["publicUrlSource"]) {
 
 function modeLabel(mode: "proxy" | "redirect"): string {
   return mode === "redirect" ? "302 直链" : "商城转发";
+}
+
+function authModeLabel(mode: "anonymous" | "account_required"): string {
+  return mode === "account_required" ? "需要商城账号" : "匿名签发";
 }
 
 function CopyValue({
@@ -130,6 +138,10 @@ export function StoreSettingsForm({ view }: { view: StoreSettingsView }) {
   const [downloadMode, setDownloadMode] = useState<string>(
     view.downloadModeOverride ?? "",
   );
+  // "" means "follow STORE_DOWNLOAD_AUTH_MODE" (the default is anonymous).
+  const [downloadAuthMode, setDownloadAuthMode] = useState<string>(
+    view.downloadAuthModeOverride ?? "",
+  );
   const [limits, setLimits] = useState<Record<string, string>>(() =>
     Object.fromEntries(view.rateLimits.map((row) => [row.channel, row.override ?? ""])),
   );
@@ -161,6 +173,7 @@ export function StoreSettingsForm({ view }: { view: StoreSettingsView }) {
     setPublicUrl(next.publicUrl);
     setTtlMinutes(String(Math.round(next.downloadTtlSeconds / 60)));
     setDownloadMode(next.downloadModeOverride ?? "");
+    setDownloadAuthMode(next.downloadAuthModeOverride ?? "");
     setLimits(
       Object.fromEntries(next.rateLimits.map((row) => [row.channel, row.override ?? ""])),
     );
@@ -183,6 +196,8 @@ export function StoreSettingsForm({ view }: { view: StoreSettingsView }) {
       downloadTtlSeconds: ttlMinutes.trim() ? Number(ttlMinutes) * 60 : null,
       // Empty means "follow STORE_DOWNLOAD_MODE".
       downloadMode: downloadMode || null,
+      // Empty means "follow STORE_DOWNLOAD_AUTH_MODE".
+      downloadAuthMode: downloadAuthMode || null,
       rateLimits: limits,
       confirmOriginChange: extra.confirmOriginChange ?? accepted.origin,
       confirmInsecureTransition: extra.confirmInsecureTransition ?? accepted.insecure,
@@ -434,6 +449,67 @@ export function StoreSettingsForm({ view }: { view: StoreSettingsView }) {
               </li>
               <li>私有仓库永远走商城转发：那个地址里带着仓库名、tag 与文件名。</li>
               <li>切换后先用一个真实论坛点一次安装：宿主是否跟随跨域 302 尚未验证，不跟随就回到商城转发。</li>
+            </ul>
+          </div>
+        </Section>
+
+        <Section
+          id="download-auth"
+          title="下载登录要求"
+          hint="决定签发下载链接前是否要求商城账号。目录、详情与搜索始终匿名可浏览。"
+        >
+          <div className="surface space-y-3 px-4 py-4">
+            <Field
+              label="签发前要求"
+              htmlFor={id("download-auth-mode")}
+              hint={
+                view.downloadAuthModeSource === "database"
+                  ? `当前生效：${authModeLabel(view.downloadAuthMode)}（后台设置；环境种子 ${authModeLabel(view.seedDownloadAuthMode)}）`
+                  : `当前生效：${authModeLabel(view.downloadAuthMode)}（跟随 STORE_DOWNLOAD_AUTH_MODE 种子）`
+              }
+            >
+              <div className="flex max-w-[22rem] items-stretch gap-1.5">
+                <Select
+                  id={id("download-auth-mode")}
+                  value={downloadAuthMode}
+                  onChange={(event) => setDownloadAuthMode(event.target.value)}
+                  className="font-mono text-[12.5px]"
+                >
+                  <option value="">跟随环境变量（{authModeLabel(view.seedDownloadAuthMode)}）</option>
+                  <option value="anonymous">匿名签发（anonymous）</option>
+                  <option value="account_required">需要商城账号（account_required）</option>
+                </Select>
+                <div className="flex shrink-0 items-center">
+                  {view.downloadAuthModeSource === "database" ? (
+                    <Badge variant="success">后台设置</Badge>
+                  ) : (
+                    <Badge variant="muted">环境变量种子</Badge>
+                  )}
+                </div>
+              </div>
+            </Field>
+
+            {(downloadAuthMode || view.seedDownloadAuthMode) === "account_required" ? (
+              <p className="rounded-md border border-border/70 bg-muted/40 px-3 py-2 text-[12.5px] leading-relaxed text-muted-foreground">
+                切到「需要商城账号」之前，先把所有站点的 sforum.store 升级到支持登录授权的版本：
+                旧插件不会带令牌，会收到 401 并只能显示「商城暂时不可用」。切回匿名立即恢复。
+              </p>
+            ) : null}
+
+            <ul className="space-y-1.5 border-t border-border pt-3 text-[12.5px] leading-relaxed text-muted-foreground">
+              <li>
+                <span className="font-medium text-foreground">匿名签发</span>
+                ：已发布即可安装，是今天的默认行为，也是新部署的默认。
+              </li>
+              <li>
+                <span className="font-medium text-foreground">需要商城账号</span>
+                ：插件页先「连接商城」，之后 30 天内的安装都不再要求登录；令牌存在宿主加密的
+                secret 设置里，设置页只显示「已配置」。
+              </li>
+              <li>
+                签名链接本身仍是 30 分钟的 bearer：闸门拦的是「拿链接」，不是「字节」。
+              </li>
+              <li>浏览器前台下载同样要求登录：未登录先跳论坛登录，再回到同一个文件。</li>
             </ul>
           </div>
         </Section>

@@ -14,6 +14,7 @@ const TARGET_TYPE_LABELS: Record<(typeof AUDIT_TARGET_TYPES)[number], string> = 
   admin: "管理员",
   account: "论坛账号",
   github_app: "GitHub App",
+  install_auth: "安装授权",
   issuer: "OAuth2 issuer",
   product: "产品",
   release_version: "版本",
@@ -26,6 +27,11 @@ const TARGET_TYPE_LABELS: Record<(typeof AUDIT_TARGET_TYPES)[number], string> = 
  * filter accepts anything and only *suggests* the values that dominate the table.
  */
 const COMMON_ACTIONS = [
+  "auth.install_request.approved",
+  "auth.install_token.issued",
+  "auth.install_token.revoked",
+  "download.issued",
+  "settings.download_auth_mode.changed",
   "admin.login.succeeded",
   "admin.login.failed",
   "admin.account.created",

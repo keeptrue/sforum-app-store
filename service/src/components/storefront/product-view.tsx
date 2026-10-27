@@ -82,7 +82,20 @@ function capabilityHeadline(summary: CapabilitySummary): string | null {
  * picker may select older ones for reading their digest, and the CTA turns off when the
  * selection is not the servable one.
  */
-export function ProductView({ product }: { product: ProductDetail }) {
+/**
+ * Whether the browser download route will ask for a store account first. `required` comes from
+ * the runtime install gate; `signedIn` is this request's forum session. Both are resolved on
+ * the server so the label and the route can never disagree.
+ */
+export type DownloadGate = { required: boolean; signedIn: boolean };
+
+export function ProductView({
+  product,
+  downloadGate = { required: false, signedIn: false },
+}: {
+  product: ProductDetail;
+  downloadGate?: DownloadGate;
+}) {
   const openInstall = useInstallDialog((state) => state.open);
   const [tab, setTab] = useState("overview");
 
@@ -733,7 +746,9 @@ export function ProductView({ product }: { product: ProductDetail }) {
                   className="press mt-3 flex h-10 w-full items-center justify-center gap-1.5 rounded-[11px] bg-primary text-xs font-semibold text-primary-foreground shadow-[inset_0_1px_0_rgba(255,255,255,.25)]"
                 >
                   <Download className="size-3.5" aria-hidden />
-                  下载安装包
+                  {downloadGate.required && !downloadGate.signedIn
+                    ? "下载（需登录）"
+                    : "下载安装包"}
                 </a>
               ) : (
                 <>
@@ -750,6 +765,12 @@ export function ProductView({ product }: { product: ProductDetail }) {
                   </p>
                 </>
               )}
+
+              {downloadGate.required && !downloadGate.signedIn ? (
+                <p className="mt-2 text-[12px] leading-relaxed text-muted-foreground">
+                  商城要求登录后才能签发下载链接。点一下会先去论坛登录，登录后自动回到这个文件。
+                </p>
+              ) : null}
 
               <p className="mt-2.5 flex items-start gap-1.5 text-[12px] leading-relaxed text-muted-foreground">
                 <ShieldCheck className="mt-0.5 size-3 shrink-0 text-success" aria-hidden />

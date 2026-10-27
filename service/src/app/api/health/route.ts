@@ -17,6 +17,10 @@ export const dynamic = "force-dynamic";
  * reported here with the layer that answered (`database` = 系统设置, `env` = the seed) and can
  * be compared against the address bar in one request.
  *
+ * `downloadAuthMode` is reported for the same reason: an operator who flipped the install gate
+ * in the console needs to confirm from outside that every process picked it up, and the mode
+ * decides whether an old plugin starts receiving 401s.
+ *
  * Configuration is optional for the probe: a process that answers is alive even if it cannot
  * serve, and turning a missing env var — or an unreachable database — into a 500 would hide
  * the difference between "wrong config" and "not listening".
@@ -39,6 +43,8 @@ export async function GET() {
       body.settingsUpdatedAt = runtime.updatedAt?.toISOString() ?? null;
       body.cookieSecure = runtime.cookieSecure;
       body.sessionCookie = cookieName(runtime.cookieSecure, "session");
+      body.downloadAuthMode = runtime.downloadAuthMode;
+      body.downloadAuthModeSource = runtime.downloadAuthModeSource;
       if (runtime.warnings.length > 0) body.configWarning = runtime.warnings.join(" · ");
     } catch (error) {
       // Database unreachable (or the settings row unreadable): report the seed, and say so.
@@ -47,6 +53,8 @@ export async function GET() {
       body.publicUrlSource = "env";
       body.cookieSecure = config.publicUrlSeed.startsWith("https:");
       body.sessionCookie = cookieName(body.cookieSecure, "session");
+      body.downloadAuthMode = config.downloadAuthMode;
+      body.downloadAuthModeSource = "env";
       body.configWarning =
         error instanceof ConfigError
           ? error.message

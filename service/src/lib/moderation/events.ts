@@ -29,7 +29,9 @@ export type AuditInput = {
     | "issuer"
     | "github_app"
     | "store_settings"
-    | "session";
+    | "session"
+    /** Install-gate requests and account tokens (they belong to an account, not a product). */
+    | "install_auth";
   targetId?: string | null;
   details?: Record<string, unknown> | null;
   ip?: string | null;

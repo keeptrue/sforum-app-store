@@ -95,6 +95,135 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/auth/mode": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 下载签发是否要求登录
+         * @description 匿名。插件在显示「连接商城」之前先问这一条；旧商城没有这个路由（404）时按
+         *     `anonymous` 处理，安装照旧匿名。响应 `no-store`。
+         */
+        get: operations["getAuthMode"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/auth/requests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 发起一次「连接商城」授权请求
+         * @description 匿名（调用方还没有凭据，凭据正是这条流程的产物）。`code_challenge` 是 S256
+         *     PKCE challenge；verifier 只留在插件后端。返回的 `authorize_url` 用生效的对外地址
+         *     拼成，插件必须校验它的 origin 与自身配置的商城地址一致后再导航。
+         *
+         *     没有可用 issuer 时返回 503 `issuer_unavailable`：授权页无从登录，不如直接说清楚。
+         */
+        post: operations["createAuthRequest"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/auth/requests/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 轮询授权状态
+         * @description 只返回 `status`，不泄露账号、标签或时间。插件按响应里的 `interval` 轮询；
+         *     `approved` 之后立即兑换，不要重复轮询。
+         */
+        get: operations["getAuthRequestStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/auth/requests/{id}/token": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 用 verifier 兑换账号令牌（一次性）
+         * @description 校验 PKCE 之后在事务里消费请求，所以同一个请求只能兑换一次：重放返回 409
+         *     `request_already_used`。verifier 不匹配返回 400 `pkce_mismatch`，且**不消耗**请求，
+         *     调用方可以改正后重试。
+         *
+         *     响应里是唯一一次出现的明文令牌。调用方必须立刻写入宿主的加密 secret 设置，
+         *     不得落日志、不得进审计。
+         */
+        post: operations["exchangeAuthRequest"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/auth/me": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 当前令牌对应的账号 */
+        get: operations["getAuthAccount"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/auth/revoke": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 断开连接（撤销当前令牌）
+         * @description 幂等：已过期、已撤销、不存在的令牌同样返回 204。插件「断开连接」先调这里（尽力），
+         *     再清宿主里的 secret。
+         */
+        post: operations["revokeAuthToken"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/download-urls": {
         parameters: {
             query?: never;
@@ -196,6 +325,14 @@ export interface components {
             /** @description Whether cookies are issued with `Secure` and the `__Host-` prefix. */
             cookieSecure?: boolean;
             nodeEnv?: string;
+            /**
+             * @description 下载签发是否要求商城账号。`anonymous` 是默认：已发布即可安装。切到
+             *     `account_required` 之后，未升级的旧插件会在 `/v1/download-urls` 收到 401。
+             * @enum {string}
+             */
+            downloadAuthMode?: "anonymous" | "account_required";
+            /** @enum {string} */
+            downloadAuthModeSource?: "database" | "env";
             /**
              * @description Present when the process is listening but its configuration is unreadable. Health
              *     stays a liveness probe: the process answering at all is still useful evidence.
@@ -431,6 +568,72 @@ export interface components {
              */
             compat?: "compatible" | "all";
         };
+        AuthMode: {
+            /** @enum {string} */
+            mode: "anonymous" | "account_required";
+            /** @description 新令牌的有效期（30 天），供插件显示「何时需要重新连接」。 */
+            token_ttl_seconds: number;
+        };
+        InstallAuthRequestCreate: {
+            /** @description S256 PKCE challenge（base64url 无填充）。verifier 不出插件后端。 */
+            code_challenge: string;
+            /** @description 插件上报的展示名，不可信，授权页按纯文本渲染。 */
+            client_label?: string;
+        };
+        InstallAuthRequestCreated: {
+            /** Format: uuid */
+            id: string;
+            /**
+             * Format: uri
+             * @description 用生效的对外地址拼成；插件必须校验 origin 后导航。
+             */
+            authorize_url: string;
+            /** @description 授权请求的有效期（300 秒）。 */
+            expires_in: number;
+            /** @description 建议轮询间隔（2 秒）。 */
+            interval: number;
+        };
+        InstallAuthRequestStatus: {
+            /** @enum {string} */
+            status: "pending" | "approved" | "denied" | "consumed" | "expired";
+        };
+        InstallAuthTokenExchange: {
+            code_verifier: string;
+        };
+        InstallAccount: {
+            /** Format: uuid */
+            id: string;
+            issuerKey: string;
+            username: string | null;
+            displayName: string | null;
+            avatarUrl: string | null;
+        };
+        InstallAuthToken: {
+            /**
+             * @description `sfo_` + 43 字符。只在本响应里出现一次；调用方必须写入宿主加密 secret，
+             *     不得落日志或审计。
+             */
+            access_token: string;
+            /** @constant */
+            token_type: "Bearer";
+            expires_in: number;
+            /** Format: date-time */
+            expires_at: string;
+            /** @constant */
+            scope: "download:issue";
+            account: components["schemas"]["InstallAccount"];
+        };
+        InstallAuthMe: {
+            account: components["schemas"]["InstallAccount"];
+            /** Format: date-time */
+            expires_at: string;
+            scope: string;
+        };
+        /**
+         * @description `download_auth_mode=account_required` 时本请求必须带 `Authorization: Bearer <token>`；
+         *     `anonymous` 时令牌可有可无（带了就校验并审计，无效令牌忽略）。签发是账号级，
+         *     但签发出来的签名 URL 仍是 30 分钟的 bearer。
+         */
         DownloadUrlRequest: {
             /** @description Product slug. */
             product: string;
@@ -457,6 +660,19 @@ export interface components {
         };
     };
     responses: {
+        /**
+         * @description 缺少或不可用的账号令牌。稳定错误码：`login_required`（没有令牌/结构不合法）、
+         *     `token_expired`、`token_revoked`、`account_disabled`、`insufficient_scope`。
+         *     插件按这五个码决定「去连接」还是「重新连接」。
+         */
+        Unauthorized: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
         /** @description Invalid query or body. */
         BadRequest: {
             headers: {
@@ -542,6 +758,16 @@ export interface operations {
                 category?: string;
                 /** @description 按扩展类型筛选；缺失表示不筛。 */
                 kind?: "plugin" | "theme";
+                /**
+                 * @description 按扩展 ID 批量过滤，逗号分隔，最多 200 个（按去重后的数量算）。用于客户端
+                 *     一次问清「我装过的这些扩展里哪些有更新」：响应只包含命中集合内的产品，
+                 *     未知 ID 直接忽略，不影响其余结果。
+                 *
+                 *     空项与重复项由服务端去掉；省略、或全部为空表示不过滤。任一 ID 不符合
+                 *     `^[a-z0-9][a-z0-9._-]{0,159}$`、或去重后超过 200 个时返回 400
+                 *     `invalid_query`——拼错的 ID 会悄悄变成「没有更新」，所以宁可报错。
+                 */
+                extensionIds?: string;
                 cursor?: string;
                 limit?: number;
             };
@@ -640,6 +866,182 @@ export interface operations {
             404: components["responses"]["NotFound"];
         };
     };
+    getAuthMode: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The gate in effect. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthMode"];
+                };
+            };
+        };
+    };
+    createAuthRequest: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InstallAuthRequestCreate"];
+            };
+        };
+        responses: {
+            /** @description The request id and where to send the operator. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstallAuthRequestCreated"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            /** @description 商城没有可用的论坛 issuer（后台未配置或已停用）。 */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getAuthRequestStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current state. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstallAuthRequestStatus"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    exchangeAuthRequest: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InstallAuthTokenExchange"];
+            };
+        };
+        responses: {
+            /** @description The account token. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstallAuthToken"];
+                };
+            };
+            /**
+             * @description `invalid_request`（body 形状）、`invalid_verifier`（长度/字符集）、
+             *     `pkce_mismatch`（challenge 对不上，请求仍可用）。
+             */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+            /**
+             * @description 请求存在但不可兑换：`request_denied` / `request_not_approved` /
+             *     `request_already_used`。
+             */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description 请求已过期（`request_expired`）。回论坛重新发起。 */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getAuthAccount: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Who this token belongs to. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstallAuthMe"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    revokeAuthToken: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Revoked (or already unusable). */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     createDownloadUrl: {
         parameters: {
             query?: never;
@@ -662,6 +1064,7 @@ export interface operations {
                     "application/json": components["schemas"]["DownloadUrlResponse"];
                 };
             };
+            401: components["responses"]["Unauthorized"];
             /**
              * @description 产品不可见、版本不存在或该平台没有资产。稳定错误码：
              *     `product_not_found` / `release_not_found` / `no_stable_release` /
@@ -690,7 +1093,11 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Redirect to a signed download URL. */
+            /**
+             * @description 有会话（或 `download_auth_mode=anonymous`）时 302 到签名下载地址；
+             *     `account_required` 且没有商城会话时 302 到
+             *     `/api/auth/sforum/start?redirect=<本路径>`，登录回调 303 回本路径。
+             */
             302: {
                 headers: {
                     Location?: string;

@@ -227,6 +227,21 @@ describe("status and exchange", () => {
     expect(missing.status).toBe(404);
   });
 
+  test("a poll faster than the advertised interval is asked to slow down", async () => {
+    const { id } = await openRequest();
+    const first = await statusRoute.GET(new Request(`${PUBLIC_URL}/api/v1/auth/requests/${id}`), {
+      params: Promise.resolve({ id }),
+    });
+    expect(first.status).toBe(200);
+
+    const second = await statusRoute.GET(new Request(`${PUBLIC_URL}/api/v1/auth/requests/${id}`), {
+      params: Promise.resolve({ id }),
+    });
+    expect(second.status).toBe(429);
+    expect(await second.json()).toMatchObject({ code: "slow_down" });
+    expect(Number(second.headers.get("retry-after"))).toBeGreaterThan(0);
+  });
+
   test("exchange returns the token once, then 409", async () => {
     const { id, verifier } = await openRequest();
     const decision = await decisionRoute.POST(

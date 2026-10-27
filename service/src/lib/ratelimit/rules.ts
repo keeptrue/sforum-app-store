@@ -16,6 +16,10 @@ export const RATE_LIMIT_CHANNELS = [
   "submit",
   "download-ip",
   "download-token",
+  "download-account",
+  "install-auth-start",
+  "install-auth-poll",
+  "install-auth-token",
   "repo",
 ] as const;
 
@@ -27,11 +31,22 @@ export const RATE_LIMIT_ENV: Record<RateLimitChannel, string> = {
   submit: "STORE_RATELIMIT_SUBMIT",
   "download-ip": "STORE_RATELIMIT_DOWNLOAD_IP",
   "download-token": "STORE_RATELIMIT_DOWNLOAD_TOKEN",
+  "download-account": "STORE_RATELIMIT_DOWNLOAD_ACCOUNT",
+  "install-auth-start": "STORE_RATELIMIT_INSTALL_AUTH_START",
+  "install-auth-poll": "STORE_RATELIMIT_INSTALL_AUTH_POLL",
+  "install-auth-token": "STORE_RATELIMIT_INSTALL_AUTH_TOKEN",
   repo: "STORE_RATELIMIT_REPO",
 };
 
-/** Defaults: login 10/5min per IP, submit 30/h per account, download 60/5min per IP
- * and 20/5min per token, repo connect 30/h per account. */
+/**
+ * Defaults: login 10/5min per IP, submit 30/h per account, download 60/5min per IP,
+ * 20/5min per token and 60/5min per account, repo connect 30/h per account.
+ *
+ * The three `install-auth-*` channels bound the connect flow, which is anonymous by
+ * necessity (the credential is what it produces). `start` is per IP because that is all an
+ * unauthenticated caller has; `poll` and `token` are per request id, which is unguessable and
+ * therefore a much tighter subject than an IP shared by a whole forum.
+ */
 export const RATE_LIMIT_DEFAULTS: Record<RateLimitChannel, string> = {
   login: "10/300",
   // Admin login is password-only, so the per-IP counter and the per-account lockout are the
@@ -40,6 +55,10 @@ export const RATE_LIMIT_DEFAULTS: Record<RateLimitChannel, string> = {
   submit: "30/3600",
   "download-ip": "60/300",
   "download-token": "20/300",
+  "download-account": "60/300",
+  "install-auth-start": "10/300",
+  "install-auth-poll": "120/300",
+  "install-auth-token": "10/300",
   repo: "30/3600",
 };
 

@@ -4,6 +4,8 @@ import { after } from "next/server";
 
 import { ProductView } from "@/components/storefront/product-view";
 import { getDb } from "@/db/client";
+import { readSessionCookie } from "@/lib/auth/cookies";
+import { findSession } from "@/lib/auth/service";
 import { loadProductDetail, loadProductSocialImage } from "@/lib/catalog/query";
 import {
   isReadmeStale,
@@ -82,5 +84,22 @@ export default async function ProductPage({
     after(() => scheduleReadmeRefreshBySlug(db, slug));
   }
 
-  return <ProductView product={product} />;
+  // The download gate is a runtime fact, so the button label has to be too: a visitor who is
+  // not signed in sees "下载（需登录）" and the link still works — the route sends them through
+  // the forum login and back to this exact file. In `anonymous` mode the flag is false and the
+  // page renders exactly what it rendered before this feature existed.
+  const runtime = await getRuntimeConfig(db);
+  const sessionToken =
+    runtime.downloadAuthMode === "account_required" ? await readSessionCookie() : null;
+  const session = sessionToken ? await findSession(db, sessionToken) : null;
+
+  return (
+    <ProductView
+      product={product}
+      downloadGate={{
+        required: runtime.downloadAuthMode === "account_required",
+        signedIn: Boolean(session),
+      }}
+    />
+  );
 }

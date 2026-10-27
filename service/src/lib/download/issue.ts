@@ -30,6 +30,14 @@ export type IssueResult =
   | {
       ok: true;
       body: { url: string; sha256: string; size: number; expiresAt: string };
+      /**
+       * What was actually issued, for the audit trail. The caller must not have to re-resolve
+       * the product to record "which version this forum downloaded": the resolver already knows,
+       * and a second lookup could disagree with the one that signed the token.
+       */
+      productId: string;
+      versionId: string;
+      version: string;
     }
   | { ok: false; status: number; code: string };
 
@@ -97,6 +105,9 @@ export async function issueDownloadUrl(
       size: asset.size,
       expiresAt: new Date(exp * 1000).toISOString(),
     },
+    productId: product.id,
+    versionId: version.id,
+    version: version.version,
   };
 }
 
@@ -136,9 +147,9 @@ async function findPublishedVersion(
   db: Db,
   productId: string,
   version: string,
-): Promise<{ id: string } | null> {
+): Promise<{ id: string; version: string } | null> {
   const [row] = await db
-    .select({ id: releaseVersions.id })
+    .select({ id: releaseVersions.id, version: releaseVersions.version })
     .from(releaseVersions)
     .where(
       and(
@@ -156,13 +167,13 @@ async function findLatestStableVersion(
   db: Db,
   productId: string,
   latestStableVersionId: string | null,
-): Promise<{ id: string } | null> {
+): Promise<{ id: string; version: string } | null> {
   // The pointer is materialised, so it can go stale (a yank clears it lazily). Re-read the
   // row instead of trusting the id: only a still-published stable row is issuable.
   if (!latestStableVersionId) return null;
 
   const [row] = await db
-    .select({ id: releaseVersions.id })
+    .select({ id: releaseVersions.id, version: releaseVersions.version })
     .from(releaseVersions)
     .where(
       and(

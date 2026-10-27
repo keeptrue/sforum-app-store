@@ -21,6 +21,7 @@ import {
   assertPublicUrlScheme,
   DEFAULT_DOWNLOAD_TTL_SECONDS,
   normalizePublicUrl,
+  parseDownloadAuthMode,
   parseDownloadMode,
   parseDownloadTtl,
   parseRateLimitOverrides,
@@ -62,6 +63,12 @@ export type StoreSettingsView = {
   seedDownloadMode: "proxy" | "redirect";
   /** What the row itself pins, or null when it follows the seed. */
   downloadModeOverride: "proxy" | "redirect" | null;
+  /** Whether minting a download URL needs a store account. */
+  downloadAuthMode: "anonymous" | "account_required";
+  downloadAuthModeSource: "database" | "env";
+  seedDownloadAuthMode: "anonymous" | "account_required";
+  /** What the row itself pins, or null when it follows the seed. */
+  downloadAuthModeOverride: "anonymous" | "account_required" | null;
   rateLimits: RateLimitRowView[];
   /** Addresses derived from `publicUrl`; shown so the operator sees the blast radius. */
   derived: { callbackUrl: string; webhookUrl: string; setupUrl: string };
@@ -119,6 +126,7 @@ type StoredRow = {
   publicUrl: string | null;
   downloadTtlSeconds: number | null;
   downloadMode: string | null;
+  downloadAuthMode: string | null;
   rateLimits: Record<string, string> | null;
   updatedAt: Date;
   updatedByAdminId: string | null;
@@ -130,6 +138,7 @@ async function readStoredRow(db: Db): Promise<StoredRow | null> {
       publicUrl: storeSettings.publicUrl,
       downloadTtlSeconds: storeSettings.downloadTtlSeconds,
       downloadMode: storeSettings.downloadMode,
+      downloadAuthMode: storeSettings.downloadAuthMode,
       rateLimits: storeSettings.rateLimits,
       updatedAt: storeSettings.updatedAt,
       updatedByAdminId: storeSettings.updatedByAdminId,
@@ -163,6 +172,14 @@ function readModeOverride(row: StoredRow | null): "proxy" | "redirect" | null {
   return stored === "proxy" || stored === "redirect" ? stored : null;
 }
 
+/** The pinned install gate, or `null` when the row follows the seed. */
+function readAuthModeOverride(
+  row: StoredRow | null,
+): "anonymous" | "account_required" | null {
+  const stored = row?.downloadAuthMode?.trim().toLowerCase();
+  return stored === "anonymous" || stored === "account_required" ? stored : null;
+}
+
 export async function getStoreSettingsView(  db: Db,
   options: { requestHost?: string | null } = {},
 ): Promise<StoreSettingsView> {
@@ -183,6 +200,10 @@ export async function getStoreSettingsView(  db: Db,
     downloadModeSource: runtime.downloadModeSource,
     seedDownloadMode: config.downloadMode,
     downloadModeOverride: readModeOverride(row),
+    downloadAuthMode: runtime.downloadAuthMode,
+    downloadAuthModeSource: runtime.downloadAuthModeSource,
+    seedDownloadAuthMode: config.downloadAuthMode,
+    downloadAuthModeOverride: readAuthModeOverride(row),
     rateLimits: rateLimitRows(runtime, row),
     derived: {
       callbackUrl: sforumCallbackUrl(runtime.publicUrl),
@@ -200,6 +221,7 @@ export type SaveSettingsInput = {
   publicUrl: string;
   downloadTtlSeconds: unknown;
   downloadMode: unknown;
+  downloadAuthMode: unknown;
   rateLimits: unknown;
   confirmOriginChange?: boolean;
   confirmInsecureTransition?: boolean;
@@ -229,6 +251,8 @@ export async function saveStoreSettings(
   const downloadTtlSeconds = parseDownloadTtl(input.downloadTtlSeconds);
   // `null` means "follow STORE_DOWNLOAD_MODE"; the effective value is resolved below.
   const downloadMode = parseDownloadMode(input.downloadMode);
+  // `null` means "follow STORE_DOWNLOAD_AUTH_MODE"; the default seed is `anonymous`.
+  const downloadAuthMode = parseDownloadAuthMode(input.downloadAuthMode);
   const overrides = parseRateLimitOverrides(input.rateLimits);
 
   const current = await getRuntimeConfig(db, { fresh: true });
@@ -275,6 +299,7 @@ export async function saveStoreSettings(
     publicUrl: current.publicUrl,
     downloadTtlSeconds: current.downloadTtlSeconds,
     downloadMode: current.downloadMode,
+    downloadAuthMode: current.downloadAuthMode,
     rateLimits: row?.rateLimits ?? {},
   };
 
@@ -282,6 +307,7 @@ export async function saveStoreSettings(
     publicUrl,
     downloadTtlSeconds,
     downloadMode: downloadMode ?? config.downloadMode,
+    downloadAuthMode: downloadAuthMode ?? config.downloadAuthMode,
     rateLimits: overrides,
   });
 
@@ -297,6 +323,16 @@ export async function saveStoreSettings(
     });
   }
 
+  const previousAuthPin = readAuthModeOverride(row);
+  const authPinChanged = previousAuthPin !== downloadAuthMode;
+  if (authPinChanged) {
+    changes.push({
+      key: "downloadAuthMode.pinned",
+      from: previousAuthPin,
+      to: downloadAuthMode,
+    });
+  }
+
   if (changes.length > 0) {
     const values = {
       // Do not pin the seed: a row that merely repeats `STORE_PUBLIC_URL` would silently stop
@@ -307,6 +343,7 @@ export async function saveStoreSettings(
       // `null` is meaningful here (follow the env seed) and is exactly what the "跟随环境变量"
       // option sends; only an explicit pick pins the row.
       downloadMode,
+      downloadAuthMode,
       rateLimits: overrides,
       updatedAt: new Date(),
       updatedByAdminId: actor.adminId,
@@ -329,6 +366,24 @@ export async function saveStoreSettings(
       details: { changes },
       ip: actor.ip ?? null,
     });
+
+    // The install gate gets its own line: it is the one setting whose flip makes every
+    // forum running an old plugin start receiving 401s, and an operator looking for "who
+    // closed installs" should not have to diff a `changes` array.
+    if (authPinChanged) {
+      await recordAudit(db, {
+        actorAdminId: actor.adminId,
+        action: "settings.download_auth_mode.changed",
+        targetType: "store_settings",
+        targetId: SINGLETON_ID,
+        details: {
+          from: previousAuthPin ?? `seed:${config.downloadAuthMode}`,
+          to: downloadAuthMode ?? `seed:${config.downloadAuthMode}`,
+          effective: downloadAuthMode ?? config.downloadAuthMode,
+        },
+        ip: actor.ip ?? null,
+      });
+    }
   }
 
   const view = await getStoreSettingsView(db, { requestHost: context.requestHost ?? null });
@@ -341,12 +396,14 @@ function diffSettings(
     publicUrl: string;
     downloadTtlSeconds: number;
     downloadMode: "proxy" | "redirect";
+    downloadAuthMode: "anonymous" | "account_required";
     rateLimits: Record<string, string>;
   },
   next: {
     publicUrl: string;
     downloadTtlSeconds: number | null;
     downloadMode: "proxy" | "redirect";
+    downloadAuthMode: "anonymous" | "account_required";
     rateLimits: Record<string, string>;
   },
 ): Array<{ key: string; from: unknown; to: unknown }> {
@@ -368,6 +425,13 @@ function diffSettings(
       key: "downloadMode",
       from: previous.downloadMode,
       to: next.downloadMode,
+    });
+  }
+  if (previous.downloadAuthMode !== next.downloadAuthMode) {
+    changes.push({
+      key: "downloadAuthMode",
+      from: previous.downloadAuthMode,
+      to: next.downloadAuthMode,
     });
   }
   for (const channel of RATE_LIMIT_CHANNELS) {
@@ -393,6 +457,8 @@ export async function clearStoreSettings(db: Db, actor: Actor): Promise<StoreSet
       details: {
         publicUrl: row.publicUrl,
         downloadTtlSeconds: row.downloadTtlSeconds,
+        downloadMode: row.downloadMode,
+        downloadAuthMode: row.downloadAuthMode,
         rateLimits: row.rateLimits,
       },
       ip: actor.ip ?? null,

@@ -127,6 +127,23 @@ export function parseDownloadMode(raw: unknown): "proxy" | "redirect" | null {
   );
 }
 
+/**
+ * The install gate: `null` = follow `STORE_DOWNLOAD_AUTH_MODE` (which defaults to
+ * `anonymous`), otherwise the operator pinned one of the two states.
+ */
+export function parseDownloadAuthMode(
+  raw: unknown,
+): "anonymous" | "account_required" | null {
+  if (raw === null || raw === undefined) return null;
+  const text = String(raw).trim().toLowerCase();
+  if (!text) return null;
+  if (text === "anonymous" || text === "account_required") return text;
+  throw invalid(
+    "invalid_download_auth_mode",
+    '下载登录要求只能是 "anonymous"（匿名签发）或 "account_required"（需要商城账号）；留空表示跟随环境变量',
+  );
+}
+
 export type RateLimitOverrides = Partial<Record<RateLimitChannel, string>>;
 
 /**

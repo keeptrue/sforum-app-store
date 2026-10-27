@@ -25,6 +25,7 @@ export const AUDIT_TARGET_TYPES = [
   "admin",
   "account",
   "github_app",
+  "install_auth",
   "issuer",
   "product",
   "release_version",

@@ -1,5 +1,6 @@
 import { getDb } from "@/db/client";
 import { requestIp } from "@/lib/auth/http";
+import { enforceAuthStartLimit } from "@/lib/install-auth/limits";
 import { createAuthRequest } from "@/lib/install-auth/service";
 import { getRuntimeConfig } from "@/lib/settings/runtime";
 
@@ -38,6 +39,9 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   const db = getDb();
+  const limited = await enforceAuthStartLimit(db, request);
+  if (limited) return limited;
+
   const runtime = await getRuntimeConfig(db);
   const result = await createAuthRequest(db, {
     codeChallenge: body.code_challenge,

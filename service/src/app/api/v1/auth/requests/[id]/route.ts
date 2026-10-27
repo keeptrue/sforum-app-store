@@ -1,4 +1,5 @@
 import { getDb } from "@/db/client";
+import { enforcePollLimit } from "@/lib/install-auth/limits";
 import { readAuthRequestStatus } from "@/lib/install-auth/service";
 
 export const runtime = "nodejs";
@@ -18,7 +19,11 @@ export async function GET(
   context: RouteContext,
 ): Promise<Response> {
   const { id } = await context.params;
-  const status = await readAuthRequestStatus(getDb(), id);
+  const db = getDb();
+  const limited = await enforcePollLimit(db, id);
+  if (limited) return limited;
+
+  const status = await readAuthRequestStatus(db, id);
   if (!status) {
     return Response.json(
       { code: "request_not_found", message: "request_not_found" },

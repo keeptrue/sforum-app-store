@@ -3,6 +3,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import type { Db } from "@/db/client";
 import type { accounts } from "@/db/schema";
 import { listActiveIssuers } from "@/lib/auth/service";
+import { recordAudit } from "@/lib/moderation/events";
 import {
   ACCOUNT_TOKEN_SCOPE,
   ACCOUNT_TOKEN_TTL_SECONDS,
@@ -196,9 +197,17 @@ export async function decideAuthRequest(
   if (decision === "deny") {
     return (await denyAuthRequest(db, id, now)) ? "denied" : "not_pending";
   }
-  return (await approveAuthRequest(db, id, accountId, now))
-    ? "approved"
-    : "not_pending";
+  if (!(await approveAuthRequest(db, id, accountId, now))) return "not_pending";
+  // Evidence for "which store account authorised this forum". The client label is untrusted
+  // text the plugin supplied, kept because it is the only clue an operator has later.
+  await recordAudit(db, {
+    actorAccountId: accountId,
+    action: "auth.install_request.approved",
+    targetType: "install_auth",
+    targetId: id,
+    details: { clientLabel: row.clientLabel },
+  });
+  return "approved";
 }
 
 export type ExchangeFailure =
@@ -269,6 +278,19 @@ export async function exchangeAuthRequest(
   const account = await findAccountForView(db, row.accountId);
   if (!account) return { ok: false, code: "request_not_found" };
 
+  await recordAudit(db, {
+    actorAccountId: row.accountId,
+    action: "auth.install_token.issued",
+    targetType: "install_auth",
+    targetId: token.id,
+    details: {
+      requestId: id,
+      scope: token.scope,
+      expiresAt: expiresAt.toISOString(),
+      clientLabel: row.clientLabel,
+    },
+  });
+
   return {
     ok: true,
     accessToken,
@@ -327,15 +349,6 @@ export async function authenticateAccountToken(
   return { ok: true, token: row.token, account: row.account };
 }
 
-/** Idempotent: the plugin may call this twice while losing the network in between. */
-export async function revokeAccountTokenById(
-  db: Db,
-  tokenId: string,
-  now: Date = new Date(),
-): Promise<void> {
-  await revokeAccountToken(db, tokenId, now);
-}
-
 /**
  * Revoke by the bearer itself, regardless of whether it is still usable.
  *
@@ -353,6 +366,13 @@ export async function revokeAccountTokenByBearer(
   const row = await findAccountTokenByHash(db, hashAccountToken(token));
   if (!row) return false;
   await revokeAccountToken(db, row.token.id, now);
+  await recordAudit(db, {
+    actorAccountId: row.token.accountId,
+    action: "auth.install_token.revoked",
+    targetType: "install_auth",
+    targetId: row.token.id,
+    details: { clientLabel: row.token.clientLabel },
+  });
   return true;
 }
 
